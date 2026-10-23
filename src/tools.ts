@@ -544,7 +544,59 @@ export function createTools(runtime: Runtime) {
     options: { namespace: "canvas" },
   }
 
-  const tools: Info[] = [designSystem, screen, systemDesign, edit, list, get, remove, open, comments, reply]
+  const history = {
+    name: "history",
+    description:
+      "List the saved versions of a design (revision, time, who made the change: the agent, a direct edit in the canvas, or a restore). " +
+      "The user can also browse and restore versions in the canvas. Use canvas_restore to go back to one.",
+    input: {
+      type: "object",
+      properties: { id: { type: "string" } },
+      required: ["id"],
+      additionalProperties: false,
+    },
+    async execute(raw: unknown, context?: unknown) {
+      runtime.track(context)
+      return guard(async () => {
+        const id = str(raw as Input, "id", true)!
+        await store.init()
+        const artifact = store.get(id) ?? fail(`No design with id "${id}". Use canvas_list to see what exists.`)
+        const versions = await store.history(id)
+        if (!versions.length) return { content: `${describe(artifact)} has no saved versions yet.` }
+        const rows = versions.map((v) => `- v${v.revision}${v.revision === artifact.revision ? " (current)" : ""}: ${v.source}, ${new Date(v.at).toISOString()}`)
+        return { content: [`${versions.length} version(s) of "${artifact.title}":`, ...rows].join("\n") }
+      })
+    },
+    options: { namespace: "canvas" },
+  }
+
+  const restore = {
+    name: "restore",
+    description:
+      "Restore an earlier version of a design. The restored content becomes a new revision, so nothing is lost and the restore can be undone. " +
+      "Use canvas_history to see the available versions.",
+    input: {
+      type: "object",
+      properties: { id: { type: "string" }, revision: { type: "number", description: "Revision number to restore, for example 3." } },
+      required: ["id", "revision"],
+      additionalProperties: false,
+    },
+    async execute(raw: unknown, context?: unknown) {
+      runtime.track(context)
+      return guard(async () => {
+        const input = raw as Input
+        const id = str(input, "id", true)!
+        const revision = typeof input.revision === "number" && Number.isInteger(input.revision) && input.revision > 0 ? input.revision : fail('"revision" must be a positive integer.')
+        await store.init()
+        store.get(id) ?? fail(`No design with id "${id}". Use canvas_list to see what exists.`)
+        const artifact = await store.restore(id, revision)
+        return report(artifact, false, [`Restored the content of v${revision}.`])
+      })
+    },
+    options: { namespace: "canvas" },
+  }
+
+  const tools: Info[] = [designSystem, screen, systemDesign, edit, list, get, remove, open, comments, reply, history, restore]
   return tools
 }
 

@@ -5,6 +5,7 @@ import type { CommentEvent, CommentStatus, CommentStore } from "./comments.js"
 import { INSPECTOR_JS } from "./inspector.js"
 import { prepareDocument } from "./render/document.js"
 import { isValidId, type Artifact, type ChangeEvent, type Store } from "./store.js"
+import { EDITABLE_KINDS, applyEdits, parseOps } from "./edit.js"
 import { VIEWER_HTML } from "./viewer.js"
 
 export interface CanvasServer {
@@ -120,7 +121,29 @@ export async function startServer(store: Store, comments: CommentStore, options:
       return json(res, 400, { error: error instanceof Error ? error.message : "Bad request" })
     }
     const text = typeof body.text === "string" ? body.text : ""
+    const origin = typeof body.origin === "string" ? body.origin.slice(0, 40) : undefined
     try {
+      const design = /^\/api\/(edit|restore)\/([a-z0-9-]+)$/.exec(path)
+      if (design) {
+        if (method !== "POST") return json(res, 405, { error: "Method not allowed" })
+        const id = design[2]!
+        const artifact = store.get(id)
+        if (!artifact) return json(res, 404, { error: `No design with id "${id}".` })
+        if (design[1] === "restore") {
+          const revision = Number(body.revision)
+          if (!Number.isInteger(revision) || revision < 1) return json(res, 400, { error: "revision must be a positive integer." })
+          return json(res, 200, { artifact: summary(await store.restore(id, revision, origin)) })
+        }
+        if (!(EDITABLE_KINDS as readonly string[]).includes(artifact.kind)) {
+          return json(res, 400, { error: `${artifact.kind} designs are generated and cannot be edited by hand.` })
+        }
+        const html = await store.html(id)
+        if (html === undefined) return json(res, 404, { error: "The HTML for this design is missing on disk." })
+        const next = applyEdits(html, parseOps(body.ops))
+        if (next === html) return json(res, 200, { artifact: summary(artifact), unchanged: true })
+        const saved = await store.save({ id, kind: artifact.kind, title: artifact.title, html: next, source: "edit", origin })
+        return json(res, 200, { artifact: summary(saved.artifact) })
+      }
       if (method === "POST" && path === "/api/comments") {
         const designId = typeof body.designId === "string" ? body.designId : ""
         const created = await comments.create({ designId, text, anchor: body.anchor })
@@ -177,6 +200,9 @@ export async function startServer(store: Store, comments: CommentStore, options:
 
     if (path === "/" || path === "/index.html") return send(res, 200, VIEWER_HTML, "text/html; charset=utf-8", cookie)
 
+    const versions = /^\/api\/history\/([a-z0-9-]+)$/.exec(path)
+    if (versions) return json(res, 200, { versions: await store.history(versions[1]!) })
+
     if (path === "/api/artifacts") return json(res, 200, { artifacts: store.list().map(summary) })
 
     if (path === "/events") {
@@ -196,7 +222,8 @@ export async function startServer(store: Store, comments: CommentStore, options:
     if (match) {
       const id = decodeURIComponent(match[2]!)
       const artifact = isValidId(id) ? store.get(id) : undefined
-      const html = artifact ? await store.html(id) : undefined
+      const rev = Number(url.searchParams.get("rev"))
+      const html = artifact ? (rev > 0 ? await store.versionHtml(id, rev) : await store.html(id)) : undefined
       if (!artifact || html === undefined) return send(res, 404, "Not found", "text/plain")
       const kind = match[1]
       if (kind === "raw") return send(res, 200, html, "text/plain; charset=utf-8")

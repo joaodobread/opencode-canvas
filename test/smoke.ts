@@ -161,6 +161,53 @@ await new Promise((r) => setTimeout(r, 600))
 assert.ok(events.length > before, "watcher event")
 assert.match((await get("/view/login")).body, /hand edited/)
 
+// direct edits
+await run("screen", { id: "hero", title: "Hero", html: '<main><h1>Hello world</h1><p>Hello world</p><button class="btn">Go</button></main>' })
+let e = await post("/api/edit/hero", { ops: [{ type: "text", before: "Hello world", after: "Hi <b>there</b>", index: 1 }], origin: "t1" })
+assert.equal(e.res.status, 200)
+let heroHtml = (await store.html("hero"))!
+assert.match(heroHtml, /<h1>Hello world<\/h1><p>Hi <b>there<\/b><\/p>/)
+e = await post("/api/edit/hero", { ops: [{ type: "style", selector: "main > h1", props: { color: "#ff0000", "font-size": "40px" } }] })
+heroHtml = (await store.html("hero"))!
+assert.match(heroHtml, /<style data-canvas-edits>\nmain > h1\{color:#ff0000!important;font-size:40px!important\}\n<\/style>/)
+e = await post("/api/edit/hero", { ops: [{ type: "style", selector: "main > h1", props: { color: "" } }] })
+assert.match((await store.html("hero"))!, /main > h1\{font-size:40px!important\}/)
+e = await post("/api/edit/hero", { ops: [{ type: "reset", selector: "main > h1" }] })
+assert.ok(!/data-canvas-edits/.test((await store.html("hero"))!))
+assert.equal((await post("/api/edit/hero", { ops: [{ type: "style", selector: "h1", props: { color: "red;} body{display:none" } }] })).res.status, 400)
+assert.equal((await post("/api/edit/hero", { ops: [{ type: "style", selector: "h1{}", props: { color: "red" } }] })).res.status, 400)
+assert.equal((await post("/api/edit/hero", { ops: [{ type: "style", selector: "h1", props: { "background-image": "red" } }] })).res.status, 400)
+assert.equal((await post("/api/edit/hero", { ops: [{ type: "text", before: "Go", after: "<img src=x onerror=alert(1)>" }] })).res.status, 400)
+assert.equal((await post("/api/edit/hero", { ops: [{ type: "text", before: "missing text", after: "x" }] })).res.status, 400)
+assert.equal((await post("/api/edit/acme-ui", { ops: [{ type: "reset", selector: "h1" }] })).res.status, 400)
+assert.equal((await post("/api/edit/nope", { ops: [{ type: "reset", selector: "h1" }] })).res.status, 404)
+
+// history
+let versions = (await get("/api/history/hero")).body
+const vlist = JSON.parse(versions).versions as any[]
+assert.ok(vlist.length >= 5, "one version per save")
+assert.equal(vlist[0].revision, store.get("hero")!.revision)
+assert.equal(vlist.at(-1).source, "agent")
+assert.ok(vlist.some((v) => v.source === "edit"))
+h = await get("/view/hero?rev=1"); assert.match(h.body, /Hello world<\/p>/)
+const heroNow = store.get("hero")!.revision
+const restored = await post("/api/restore/hero", { revision: 1, origin: "t1" })
+assert.equal(restored.res.status, 200); assert.equal(restored.json.artifact.revision, heroNow + 1)
+assert.match((await store.html("hero"))!, /<p>Hello world<\/p>/)
+assert.equal(JSON.parse((await get("/api/history/hero")).body).versions[0].source, "restore v1")
+assert.equal((await post("/api/restore/hero", { revision: 999 })).res.status, 400)
+assert.match(text(await run("history", { id: "hero" })), /restore v1/)
+await run("restore", { id: "hero", revision: 2 })
+assert.match((await store.html("hero"))!, /Hi <b>there<\/b>/)
+await assert.rejects(run("restore", { id: "hero", revision: 0 }), /positive integer/)
+// history exists for designs saved before history was added
+await writeFile(path.join(dir, "canvas", "legacy.html"), "<p>one</p>")
+await new Promise((r) => setTimeout(r, 500))
+await run("screen", { id: "legacy", title: "Legacy", html: "<p>two</p>" })
+assert.ok(JSON.parse((await get("/api/history/legacy")).body).versions.length >= 2)
+await run("delete", { id: "hero" }); await run("delete", { id: "legacy" })
+assert.deepEqual(JSON.parse((await get("/api/history/hero")).body).versions, [])
+
 // delete protection
 await assert.rejects(run("delete", { id: "acme-ui" }), /used by/)
 await run("delete", { id: "login" })
