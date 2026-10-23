@@ -71,6 +71,10 @@ Ask for options (\"show me three directions for the pricing page\") and the agen
 
 Press **Edit** (or `E`) on a screen, component, prototype or document. Click an element to change its color, background, font, size, weight, alignment, line height, letter spacing, radius, opacity and spacing with sliders and inputs. Double-click text (or press Enter on a selected one) to type in place. Every change is written into the design source: text is replaced where it lives and style changes go into one `<style data-canvas-edits>` block. `Reset` clears the style changes of the selected element. Generated designs (design systems and diagrams) are not hand-editable; ask the agent.
 
+## Export
+
+The `...` menu has **Export as PDF** (one page sized to the design's device) and **Export all as ZIP** (every design as a standalone HTML file with its design system inlined). PDF rendering uses an installed Chrome, Chromium, Edge or Brave; set `CHROME_PATH` to point at a specific executable. The same files are available at `/pdf/<id>` and `/zip[?design=<id>]`.
+
 ## Version history
 
 Every save is kept (the last 60 per design) in `.history/` inside the canvas directory, whether it came from the agent, a direct edit, a restore or a file edited on disk. Open the clock button to browse versions, preview any of them and restore it. A restore becomes a new revision, so nothing is lost. `Ctrl/Cmd+Z` and `Shift+Ctrl/Cmd+Z` undo and redo your edits in the canvas.

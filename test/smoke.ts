@@ -228,6 +228,32 @@ assert.equal((await post("/api/variations/pricing/discard", {})).json.removed, 2
 assert.match((await store.html("pricing"))!, /<h1>B<\/h1>/, "discard keeps the original")
 await run("delete", { id: "pricing" })
 
+// export
+await run("screen", { id: "doc", title: "Doc", html: "<h1>Print me</h1>" })
+const zipRes = await fetch(base + "/zip")
+assert.equal(zipRes.headers.get("content-type"), "application/zip")
+const zip = Buffer.from(await zipRes.arrayBuffer())
+assert.equal(zip.readUInt32LE(0), 0x04034b50); assert.equal(zip.readUInt32LE(zip.length - 22), 0x06054b50)
+assert.ok(zip.includes("login.html") || zip.includes("doc.html")); assert.ok(zip.includes("Print me"))
+assert.equal(zip.readUInt16LE(zip.length - 22 + 10), store.list().length + 1, "one file per design plus README.txt")
+{
+  const { buildZip } = await import("../src/export.js")
+  await writeFile(path.join(dir, "sample.zip"), buildZip([{ name: "a.txt", data: "hello" }, { name: "b/ü.txt", data: "olá" }]))
+  const unzip = Bun.spawnSync(["unzip", "-p", path.join(dir, "sample.zip"), "a.txt"])
+  if (unzip.exitCode !== 127 && unzip.exitCode !== undefined && unzip.stderr.toString() !== "unzip: not found") {
+    assert.equal(unzip.exitCode, 0); assert.equal(unzip.stdout.toString(), "hello")
+  }
+}
+assert.equal((await fetch(base + "/zip?design=nope")).status, 404)
+const { findChrome } = await import("../src/export.js")
+const pdf = await fetch(base + "/pdf/doc")
+if (findChrome()) {
+  assert.equal(pdf.status, 200); assert.equal(pdf.headers.get("content-type"), "application/pdf")
+  assert.equal(Buffer.from(await pdf.arrayBuffer()).subarray(0, 5).toString(), "%PDF-")
+} else assert.equal(pdf.status, 500)
+assert.equal((await fetch(base + "/pdf/nope")).status, 404)
+await run("delete", { id: "doc" })
+
 // delete protection
 await assert.rejects(run("delete", { id: "acme-ui" }), /used by/)
 await run("delete", { id: "login" })

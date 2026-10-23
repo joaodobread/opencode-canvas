@@ -72,7 +72,7 @@ main{position:relative;display:flex;flex-direction:column;min-width:0;min-height
 .btn.ghost:hover{background:var(--hover);color:var(--text)}
 .badge{position:absolute;top:-6px;right:-6px;min-width:17px;height:17px;padding:0 4px;border-radius:99px;background:var(--accent);color:var(--on-accent);border:2px solid var(--panel);font-size:10px;font-weight:700;display:grid;place-items:center;line-height:1}
 .menuwrap{position:relative}
-.menu{position:absolute;right:0;top:38px;width:200px;padding:5px;background:var(--panel);border:1px solid var(--border);border-radius:11px;box-shadow:var(--shadow);z-index:30}
+.menu{position:absolute;right:0;top:38px;width:216px;padding:5px;background:var(--panel);border:1px solid var(--border);border-radius:11px;box-shadow:var(--shadow);z-index:30}
 .menu>*{display:flex;align-items:center;gap:10px;width:100%;height:34px;padding:0 10px;border:0;border-radius:7px;background:transparent;color:var(--text);text-decoration:none;font-size:13px;text-align:left}
 .menu>*:hover{background:var(--hover)}
 .menu svg{color:var(--muted)}
@@ -210,6 +210,8 @@ iframe{display:block;width:100%;height:100%;border:0;background:#fff}
         <button id="m-reload"><span data-i="refresh"></span>Reload preview</button>
         <a id="open" target="_blank" rel="noopener"><span data-i="external"></span>Open in new tab</a>
         <a id="download"><span data-i="download"></span>Export as HTML</a>
+        <button id="m-pdf"><span data-i="doc"></span>Export as PDF</button>
+        <a id="m-zip"><span data-i="download"></span>Export all as ZIP</a>
         <button id="copy"><span data-i="link"></span>Copy link</button>
       </div>
     </div>
@@ -399,6 +401,7 @@ iframe{display:block;width:100%;height:100%;border:0;background:#fff}
     $('open').href=q('/view/'+encodeURIComponent(a.id));
     $('download').href=q('/export/'+encodeURIComponent(a.id));
     $('download').setAttribute('download',a.id+'.html');
+    $('m-zip').href=q('/zip');$('m-zip').setAttribute('download','canvas-designs.zip');$('m-pdf').hidden=a.kind==='variations';
     var box=stage.querySelector('.frame-box'),frame=box&&box.querySelector('iframe');
     if(stage.querySelector('.compare'))box=frame=null;
     if(!box||box.getAttribute('data-id')!==a.id){
@@ -905,6 +908,17 @@ iframe{display:block;width:100%;height:100%;border:0;background:#fff}
   addEventListener('click',function(e){if(!$('menu').hidden&&!e.target.closest('.menuwrap'))closeMenu()});
   $('menu').onclick=closeMenu;
   $('m-reload').onclick=function(){renderStage(true)};
+  $('m-pdf').onclick=function(){
+    var a=find(state.current);if(!a)return;
+    toast('Rendering PDF...');
+    fetch(q('/pdf/'+encodeURIComponent(a.id))).then(function(r){
+      if(!r.ok)return r.text().then(function(t){throw new Error(t)});
+      return r.blob();
+    }).then(function(b){
+      var l=document.createElement('a');l.href=URL.createObjectURL(b);l.download=a.id+'.pdf';document.body.appendChild(l);l.click();l.remove();
+      setTimeout(function(){URL.revokeObjectURL(l.href)},4000);toast('PDF ready');
+    }).catch(function(e){toast(e.message)});
+  };
   $('q').oninput=function(e){state.query=e.target.value;renderNav()};
   $('devices').onclick=function(e){var b=e.target.closest('button'),d=b&&b.getAttribute('data-d');if(d){state.device=d;renderStage(false)}};
   $('themes').onclick=function(e){var b=e.target.closest('button'),t=b&&b.getAttribute('data-t');if(t){state.theme=t;renderStage(false)}};
