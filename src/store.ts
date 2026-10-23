@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events"
 import { watch, type FSWatcher } from "node:fs"
-import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises"
+import { access, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
 
 export const KINDS = ["design-system", "screen", "component", "prototype", "system-design", "document"] as const
@@ -28,7 +28,29 @@ export interface ChangeEvent {
   type: "upsert" | "remove" | "touch"
   id: string
   focus?: boolean
+  revision?: number
+  /** Who made the change: "agent", "edit" (direct edit in the canvas), "restore" or "external". */
+  source?: string
+  /** Id of the browser tab that made the change, so that tab can skip reloading its own edits. */
+  origin?: string
 }
+
+export interface Version {
+  revision: number
+  at: number
+  source: string
+  title: string
+}
+
+interface Snapshot extends Version {
+  html: string
+  description?: string
+  device?: Device
+  designSystem?: string
+  data?: unknown
+}
+
+const HISTORY_LIMIT = 60
 
 export interface SaveInput {
   id?: string
@@ -39,6 +61,8 @@ export interface SaveInput {
   device?: Device
   designSystem?: string
   data?: unknown
+  source?: string
+  origin?: string
 }
 
 const MAX_HTML_BYTES = 4 * 1024 * 1024
@@ -89,6 +113,84 @@ export class Store extends EventEmitter {
 
   htmlFile(id: string) {
     return path.join(this.dir, `${id}.html`)
+  }
+
+  private historyDir(id: string) {
+    return path.join(this.dir, ".history", id)
+  }
+
+  private async snapshot(artifact: Artifact, html: string, source: string) {
+    const dir = this.historyDir(artifact.id)
+    await mkdir(dir, { recursive: true })
+    const entry: Snapshot = {
+      revision: artifact.revision,
+      at: artifact.updatedAt,
+      source,
+      title: artifact.title,
+      html,
+      description: artifact.description,
+      device: artifact.device,
+      designSystem: artifact.designSystem,
+      data: artifact.data,
+    }
+    await writeFile(path.join(dir, `${artifact.revision}.json`), JSON.stringify(entry))
+    const revisions = await this.revisions(artifact.id)
+    for (const old of revisions.slice(HISTORY_LIMIT)) await rm(path.join(dir, `${old}.json`), { force: true })
+  }
+
+  private async revisions(id: string): Promise<number[]> {
+    const names = await readdir(this.historyDir(id)).catch(() => [] as string[])
+    return names
+      .filter((name) => /^\d+\.json$/.test(name))
+      .map((name) => Number.parseInt(name, 10))
+      .sort((a, b) => b - a)
+  }
+
+  private async readSnapshot(id: string, revision: number): Promise<Snapshot | undefined> {
+    try {
+      return JSON.parse(await readFile(path.join(this.historyDir(id), `${revision}.json`), "utf8")) as Snapshot
+    } catch {
+      return undefined
+    }
+  }
+
+  async history(id: string): Promise<Version[]> {
+    await this.init()
+    if (!this.artifacts.has(id)) return []
+    const out: Version[] = []
+    for (const revision of await this.revisions(id)) {
+      const entry = await this.readSnapshot(id, revision)
+      if (entry) out.push({ revision: entry.revision, at: entry.at, source: entry.source, title: entry.title })
+    }
+    return out
+  }
+
+  async versionHtml(id: string, revision: number): Promise<string | undefined> {
+    await this.init()
+    if (!this.artifacts.has(id)) return undefined
+    if (this.artifacts.get(id)!.revision === revision) return this.html(id)
+    return (await this.readSnapshot(id, revision))?.html
+  }
+
+  async restore(id: string, revision: number, origin?: string): Promise<Artifact> {
+    await this.init()
+    const existing = this.artifacts.get(id)
+    if (!existing) throw new Error(`No design with id "${id}".`)
+    const entry = await this.readSnapshot(id, revision)
+    if (!entry) throw new Error(`Version v${revision} of "${id}" is not in the history.`)
+    const saved = await this.save({
+      id,
+      kind: existing.kind,
+      title: entry.title,
+      html: entry.html,
+      description: entry.description,
+      device: entry.device,
+      designSystem: entry.designSystem,
+      data: entry.data,
+      source: `restore v${revision}`,
+      origin,
+    })
+    return saved.artifact
   }
 
   private async load() {
@@ -177,8 +279,11 @@ export class Store extends EventEmitter {
     }
     existing.updatedAt = Date.now()
     existing.revision += 1
-    await this.enqueue(() => this.persistIndex())
-    this.emitChange({ type: "touch", id, focus: true })
+    await this.enqueue(async () => {
+      await this.persistIndex()
+      await this.snapshot(existing, html, "external").catch(() => undefined)
+    })
+    this.emitChange({ type: "touch", id, focus: true, source: "external", revision: existing.revision })
   }
 
   private emitChange(event: ChangeEvent) {
@@ -250,13 +355,25 @@ export class Store extends EventEmitter {
       updatedAt: now,
       revision: (existing?.revision ?? 0) + 1,
     }
+    const source = input.source ?? "agent"
     await this.enqueue(async () => {
+      if (existing) {
+        const known = await access(path.join(this.historyDir(id), `${existing.revision}.json`)).then(
+          () => true,
+          () => false,
+        )
+        if (!known) {
+          const previous = await readFile(this.htmlFile(id), "utf8").catch(() => undefined)
+          if (previous !== undefined) await this.snapshot(existing, previous, "earlier").catch(() => undefined)
+        }
+      }
       this.written.set(id, input.html)
       await writeFile(this.htmlFile(id), input.html)
       this.artifacts.set(id, artifact)
       await this.persistIndex()
+      await this.snapshot(artifact, input.html, source).catch(() => undefined)
     })
-    this.emitChange({ type: "upsert", id, focus: true })
+    this.emitChange({ type: "upsert", id, focus: true, source, origin: input.origin, revision: artifact.revision })
     return { artifact, created: !existing }
   }
 
@@ -267,6 +384,7 @@ export class Store extends EventEmitter {
       this.written.set(id, null)
       this.artifacts.delete(id)
       await rm(this.htmlFile(id), { force: true })
+      await rm(this.historyDir(id), { recursive: true, force: true })
       await this.persistIndex()
     })
     this.emitChange({ type: "remove", id })

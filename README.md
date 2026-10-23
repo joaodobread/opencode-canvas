@@ -47,6 +47,8 @@ To work on a local checkout, run `npm install` in it and point `package` at the 
 | `canvas_system_design` | Architecture diagram from nodes/edges with automatic layout.             |
 | `canvas_edit`          | Exact-text replacement inside an existing design.                        |
 | `canvas_get` / `canvas_list` / `canvas_delete` / `canvas_open` | Manage designs. |
+| `canvas_history`       | List the saved versions of a design.                                     |
+| `canvas_restore`       | Go back to an earlier version (becomes a new revision).                  |
 | `canvas_comments`      | List comments the user left on designs in the browser.                   |
 | `canvas_reply`         | Answer a comment (shown in its thread) and optionally resolve it.        |
 
@@ -58,7 +60,15 @@ The tools are reached through `execute` (Code Mode) by default, like other plugi
 
 Press **Comment** (or press `C`) in the preview, click any element and describe the change. The comment is sent to the OpenCode session that last used the canvas (or the most recent session of the project) with the element's selector, text and HTML. The agent edits the design and answers with `canvas_reply`; its reply and the resolved state appear in the thread, and numbered pins mark open comments on the design. Comments are stored in `comments.json` next to the designs. If no session is reachable the comment stays pending and can be retried from the panel.
 
-Viewer shortcuts: `/` search designs, `C` comment mode, `Esc` cancel, `Enter` send (Shift+Enter for a new line).
+Viewer shortcuts: `/` search designs, `C` comment mode, `E` edit mode, `Ctrl/Cmd+Z` undo, `Esc` cancel, `Enter` send (Shift+Enter for a new line).
+
+## Direct editing
+
+Press **Edit** (or `E`) on a screen, component, prototype or document. Click an element to change its color, background, font, size, weight, alignment, line height, letter spacing, radius, opacity and spacing with sliders and inputs. Double-click text (or press Enter on a selected one) to type in place. Every change is written into the design source: text is replaced where it lives and style changes go into one `<style data-canvas-edits>` block. `Reset` clears the style changes of the selected element. Generated designs (design systems and diagrams) are not hand-editable; ask the agent.
+
+## Version history
+
+Every save is kept (the last 60 per design) in `.history/` inside the canvas directory, whether it came from the agent, a direct edit, a restore or a file edited on disk. Open the clock button to browse versions, preview any of them and restore it. A restore becomes a new revision, so nothing is lost. `Ctrl/Cmd+Z` and `Shift+Ctrl/Cmd+Z` undo and redo your edits in the canvas.
 
 ## How it works
 

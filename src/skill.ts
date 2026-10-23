@@ -15,6 +15,7 @@ The canvas plugin gives you tools (namespace \`canvas\`) that render designs as 
 - \`canvas_edit\` - exact-text replacement inside an existing design (cheap tweaks).
 - \`canvas_get\`, \`canvas_list\`, \`canvas_delete\`, \`canvas_open\`.
 - \`canvas_comments\` / \`canvas_reply\` - feedback the user pins on elements in the browser.
+- \`canvas_history\` / \`canvas_restore\` - every revision is saved; list versions and go back to one (the restore becomes a new revision).
 
 ## Workflow
 
@@ -33,6 +34,10 @@ The user can press Comment in the browser, click an element and describe a chang
 2. Make the smallest change that satisfies the request (\`canvas_edit\`, or the matching canvas tool for design systems and diagrams). Keep the rest of the design untouched.
 3. Call \`canvas_reply\` with one or two sentences about what you changed and \`resolve: true\`. If the request is ambiguous, reply with a question and leave it open.
 4. \`canvas_comments\` lists pending comments if you need to catch up.
+
+## Direct edits
+
+The user can also press Edit in the browser to change text, colors, sizes and spacing directly. Those changes are written into the design source: text is replaced in place, and style changes go into one \`<style data-canvas-edits>\` block before \`</body>\`. Keep that block when you rewrite a screen with \`canvas_screen\` (read it with \`canvas_get\` first), or the user's tweaks are lost; they can still be recovered with \`canvas_restore\`.
 
 ## Screen quality bar
 
