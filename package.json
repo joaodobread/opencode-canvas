@@ -1,6 +1,6 @@
 {
   "name": "opencode-canvas",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Canvas for OpenCode: create screens, design systems and system designs as HTML and preview them live in the browser.",
   "keywords": [
     "opencode",
