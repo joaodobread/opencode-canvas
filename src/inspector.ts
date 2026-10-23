@@ -402,10 +402,14 @@ addEventListener('load',function(){post({type:'ready',loaded:true})});
 
 /**
  * Script for the artboards of the board view. The board catches wheel events itself (to pan and zoom)
- * and forwards them to the active artboard:
- *   viewer -> frame: scrollby {dx, dy}
+ * and forwards them to the active artboard. It also follows the theme picked in the viewer:
+ *   viewer -> frame: scrollby {dx, dy}, theme {value}
  */
 export const BOARD_FRAME_JS = String.raw`(function(){
 if(window.__canvasBoard)return;window.__canvasBoard=1;
-addEventListener('message',function(e){var d=e.data;if(e.source!==parent||!d||d.canvas!==1||d.type!=='scrollby')return;window.scrollBy(+d.dx||0,+d.dy||0)});
+addEventListener('message',function(e){
+  var d=e.data;if(e.source!==parent||!d||d.canvas!==1)return;
+  if(d.type==='scrollby')window.scrollBy(+d.dx||0,+d.dy||0);
+  else if(d.type==='theme'){var r=document.documentElement;if(d.value==='auto'||!d.value)r.removeAttribute('data-theme');else r.setAttribute('data-theme',d.value)}
+});
 })();`

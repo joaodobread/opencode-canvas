@@ -41,6 +41,8 @@ export interface Diagram {
   title: string
   description?: string
   direction?: "LR" | "TB"
+  /** Edge shape: straight lines with rounded corners (default) or bezier curves. */
+  routing?: "orthogonal" | "curved"
   nodes: DiagramNode[]
   edges: DiagramEdge[]
   notes?: string[]
@@ -381,6 +383,56 @@ function smooth(points: Pt[], horizontal: boolean): string {
   return d
 }
 
+/** Straight segments joined by rounded corners. */
+function rounded(points: Pt[], radius = 10): string {
+  const pts = points.filter((p, i) => {
+    if (i === 0) return true
+    const q = points[i - 1]!
+    return Math.abs(p.x - q.x) > 0.5 || Math.abs(p.y - q.y) > 0.5
+  })
+  const clean = pts.filter((p, i) => {
+    if (i === 0 || i === pts.length - 1) return true
+    const a = pts[i - 1]!
+    const b = pts[i + 1]!
+    return !((Math.abs(a.x - p.x) < 0.5 && Math.abs(p.x - b.x) < 0.5) || (Math.abs(a.y - p.y) < 0.5 && Math.abs(p.y - b.y) < 0.5))
+  })
+  const f = (n: number) => n.toFixed(1)
+  let d = `M${f(clean[0]!.x)},${f(clean[0]!.y)}`
+  for (let i = 1; i < clean.length - 1; i++) {
+    const a = clean[i - 1]!
+    const p = clean[i]!
+    const b = clean[i + 1]!
+    const l1 = Math.hypot(p.x - a.x, p.y - a.y)
+    const l2 = Math.hypot(b.x - p.x, b.y - p.y)
+    const r = Math.min(radius, l1 / 2, l2 / 2)
+    const s1 = { x: p.x - ((p.x - a.x) / l1) * r, y: p.y - ((p.y - a.y) / l1) * r }
+    const s2 = { x: p.x + ((b.x - p.x) / l2) * r, y: p.y + ((b.y - p.y) / l2) * r }
+    d += ` L${f(s1.x)},${f(s1.y)} Q${f(p.x)},${f(p.y)} ${f(s2.x)},${f(s2.y)}`
+  }
+  const end = clean[clean.length - 1]!
+  if (clean.length > 1) d += ` L${f(end.x)},${f(end.y)}`
+  return d
+}
+
+/** How far the node outline sits inside its bounding box at `off` from the middle of the side an edge attaches to. */
+function sideInset(type: NodeType, horizontal: boolean, w: number, h: number, off: number): number {
+  const o = Math.abs(off)
+  const corner = (r: number, half: number) => {
+    const d = o - (half - r)
+    return d > 0 ? r - Math.sqrt(Math.max(0, r * r - d * d)) : 0
+  }
+  if (horizontal) {
+    if (type === "gateway" || type === "loadbalancer") return (16 * o) / (h / 2)
+    if (type === "queue") return corner(h / 2, h / 2)
+    if (type === "user" || type === "external") return corner(h / 2.6, h / 2)
+    return 0
+  }
+  if (type === "database" || type === "storage") return 9 - 9 * Math.sqrt(Math.max(0, 1 - (o / (w / 2)) ** 2))
+  if (type === "queue") return corner(h / 2, w / 2)
+  if (type === "user" || type === "external") return corner(h / 2.6, w / 2)
+  return 0
+}
+
 function wrap(text: string, max: number): string[] {
   const words = text.split(/\s+/)
   const lines: string[] = []
@@ -424,7 +476,8 @@ function nodeShape(type: NodeType, x: number, y: number, w: number, h: number): 
 
 export function renderSystemDesign(diagram: Diagram): string {
   validate(diagram)
-  const { horizontal, items, routes } = layout(diagram)
+  const { horizontal, items, routes, layers } = layout(diagram)
+  const curved = diagram.routing === "curved"
   const place = (item: Item): Pt => (horizontal ? { x: item.a + PAD, y: item.b + PAD } : { x: item.b + PAD, y: item.a + PAD })
 
   const nodeBox = new Map<string, { x: number; y: number; w: number; h: number }>()
@@ -438,14 +491,6 @@ export function renderSystemDesign(diagram: Diagram): string {
     nodeBox.set(item.key, { x: p.x - w / 2, y: p.y - h / 2, w, h })
     maxX = Math.max(maxX, p.x + w / 2)
     maxY = Math.max(maxY, p.y + h / 2)
-  }
-
-  const anchor = (item: Item, side: "in" | "out"): Pt => {
-    const p = place(item)
-    if (item.dummy) return p
-    const box = nodeBox.get(item.key)!
-    if (horizontal) return { x: side === "out" ? box.x + box.w : box.x, y: p.y }
-    return { x: p.x, y: side === "out" ? box.y + box.h : box.y }
   }
 
   // groups
@@ -470,29 +515,122 @@ export function renderSystemDesign(diagram: Diagram): string {
       `<text x="${x1 + 16}" y="${y1 + 24}" class="sd-group">${esc(name)}</text></g>`
   }
 
-  // edges
+  // edges: each edge gets its own port on the node side and its own channel in the gap between layers
+  const ports = new Map<string, number>()
+  const portKey = (r: number, side: "in" | "out") => `${r}:${side}`
+  const bySide = new Map<string, { r: number; other: number }[]>()
+  routes.forEach((route, r) => {
+    const items = route.items
+    const add = (item: Item, side: "in" | "out", other: Item) => {
+      const key = `${item.key}:${side}`
+      bySide.set(key, [...(bySide.get(key) ?? []), { r, other: other.b }])
+    }
+    add(items[0]!, "out", items[1]!)
+    add(items[items.length - 1]!, "in", items[items.length - 2]!)
+  })
+  for (const [key, list] of bySide) {
+    const item = items.get(key.slice(0, key.lastIndexOf(":")))!
+    const side = key.endsWith(":in") ? "in" : "out"
+    list.sort((x, y) => x.other - y.other || x.r - y.r)
+    const max = Math.max(0, item.lb / 2 - (horizontal ? 12 : 24))
+    const step = list.length > 1 ? Math.min(horizontal ? 14 : 22, (2 * max) / (list.length - 1)) : 0
+    list.forEach((e, i) => ports.set(portKey(e.r, side), (i - (list.length - 1) / 2) * step))
+  }
+  const toXY = (a: number, b: number): Pt => (horizontal ? { x: a + PAD, y: b + PAD } : { x: b + PAD, y: a + PAD })
+  const end = (item: Item, side: "in" | "out", r: number) => {
+    if (item.dummy) return { a: item.a, b: item.b }
+    const off = ports.get(portKey(r, side)) ?? 0
+    const box = nodeBox.get(item.key)!
+    const inset = sideInset(item.node!.type ?? "service", horizontal, box.w, box.h, off)
+    return { a: side === "out" ? item.a + item.la / 2 - inset : item.a - item.la / 2 + inset, b: item.b + off }
+  }
+  const points = routes.map((route, r) => route.items.map((item, i) => (i === 0 ? end(item, "out", r) : i === route.items.length - 1 ? end(item, "in", r) : { a: item.a, b: item.b })))
+  const span = layers.map((layer) => {
+    const center = layer[0]?.a ?? 0
+    const half = Math.max(0, ...layer.map((i) => i.la)) / 2
+    return { from: center - half, to: center + half }
+  })
+  const channel = new Map<string, number>()
+  const gaps = new Map<number, { key: string; b1: number; b2: number }[]>()
+  routes.forEach((route, r) => {
+    for (let i = 0; i < route.items.length - 1; i++) {
+      const p = points[r]![i]!
+      const q = points[r]![i + 1]!
+      if (Math.abs(p.b - q.b) < 1) continue
+      const layer = route.items[i]!.layer
+      gaps.set(layer, [...(gaps.get(layer) ?? []), { key: `${r}:${i}`, b1: p.b, b2: q.b }])
+    }
+  })
+  for (const [layer, segs] of gaps) {
+    const from = span[layer]!.to + 14
+    const to = (span[layer + 1]?.from ?? from + LAYER_GAP) - 14
+    // downward segments that start higher turn further out (and the mirror for upward ones), which avoids most crossings
+    const down = segs.filter((s) => s.b2 > s.b1).sort((x, y) => y.b1 - x.b1)
+    const up = segs.filter((s) => s.b2 < s.b1).sort((x, y) => x.b1 - y.b1)
+    const ordered = [...down, ...up]
+    const width = Math.max(0, to - from)
+    ordered.forEach((s, i) => channel.set(s.key, from + ((i + 0.5) * width) / ordered.length))
+  }
+
   let edgeSvg = ""
   let labelSvg = ""
-  routes.forEach((route) => {
-    // a flipped edge (cycle breaker) is laid out dst->src, so walk the chain backwards to follow the real flow
-    const chain = route.reversed ? [...route.items].reverse() : route.items
-    const last = chain.length - 1
-    const flow = chain.map((item, i) => {
-      if (item.dummy) return place(item)
-      if (i === 0) return anchor(item, route.reversed ? "in" : "out")
-      if (i === last) return anchor(item, route.reversed ? "out" : "in")
-      return place(item)
-    })
+  const placed: { x1: number; x2: number; y1: number; y2: number }[] = []
+  routes.forEach((route, r) => {
+    const pts = points[r]!
+    let flow: Pt[]
+    if (curved) flow = pts.map((p) => toXY(p.a, p.b))
+    else {
+      const line: { a: number; b: number }[] = [pts[0]!]
+      for (let i = 0; i < pts.length - 1; i++) {
+        const p = pts[i]!
+        const q = pts[i + 1]!
+        const c = channel.get(`${r}:${i}`)
+        if (c !== undefined) line.push({ a: c, b: p.b }, { a: c, b: q.b })
+        line.push(q)
+      }
+      flow = line.map((p) => toXY(p.a, p.b))
+    }
+    // a flipped edge (cycle breaker) is laid out dst->src, so walk it backwards to follow the real flow
+    if (route.reversed) flow.reverse()
     const style = route.edge.style ?? "solid"
     const dash = style === "dashed" ? ' stroke-dasharray="8 5"' : style === "dotted" ? ' stroke-dasharray="2 5" stroke-linecap="round"' : ""
     const start = route.edge.bidirectional ? ' marker-start="url(#sd-arrow-start)"' : ""
-    edgeSvg += `<path class="sd-edge" d="${smooth(flow, horizontal)}"${dash}${start} marker-end="url(#sd-arrow)"/>`
+    edgeSvg += `<path class="sd-edge" d="${curved ? smooth(flow, horizontal) : rounded(flow)}"${dash}${start} marker-end="url(#sd-arrow)"/>`
     if (route.edge.label) {
-      const at = Math.floor((flow.length - 1) / 2)
-      const mid = flow[at]!
-      const next = flow[at + 1] ?? mid
-      const lx = (mid.x + next.x) / 2
-      const ly = (mid.y + next.y) / 2
+      let lx: number
+      let ly: number
+      if (curved) {
+        const at = Math.floor((flow.length - 1) / 2)
+        const mid = flow[at]!
+        const next = flow[at + 1] ?? mid
+        lx = (mid.x + next.x) / 2
+        ly = (mid.y + next.y) / 2
+      } else {
+        const width = route.edge.label.length * 6.4 + 14
+        const segs = flow.slice(1).map((q, i) => ({ p: flow[i]!, q, len: Math.hypot(q.x - flow[i]!.x, q.y - flow[i]!.y) })).sort((x, y) => y.len - x.len)
+        const free = (x: number, y: number) => {
+          const box = { x1: x - width / 2 - 4, x2: x + width / 2 + 4, y1: y - 14, y2: y + 14 }
+          const hit = (o: { x1: number; x2: number; y1: number; y2: number }) => box.x1 < o.x2 && o.x1 < box.x2 && box.y1 < o.y2 && o.y1 < box.y2
+          return !placed.some(hit) && ![...nodeBox.values()].some((n) => hit({ x1: n.x, x2: n.x + n.w, y1: n.y, y2: n.y + n.h }))
+        }
+        let spot: Pt | undefined
+        for (const seg of segs) {
+          for (const t of [0.5, 0.35, 0.65, 0.2, 0.8]) {
+            const x = seg.p.x + (seg.q.x - seg.p.x) * t
+            const y = seg.p.y + (seg.q.y - seg.p.y) * t
+            if (free(x, y)) {
+              spot = { x, y }
+              break
+            }
+          }
+          if (spot) break
+        }
+        const fallback = segs[0] ?? { p: flow[0]!, q: flow[0]! }
+        spot ??= { x: (fallback.p.x + fallback.q.x) / 2, y: (fallback.p.y + fallback.q.y) / 2 }
+        lx = spot.x
+        ly = spot.y
+        placed.push({ x1: lx - width / 2, x2: lx + width / 2, y1: ly - 10, y2: ly + 10 })
+      }
       const text = route.edge.label
       const width = text.length * 6.4 + 14
       labelSvg += `<g class="sd-edge-label"><rect x="${(lx - width / 2).toFixed(1)}" y="${(ly - 10).toFixed(1)}" width="${width.toFixed(1)}" height="20" rx="10"/><text x="${lx.toFixed(1)}" y="${(ly + 4).toFixed(1)}" text-anchor="middle">${esc(text)}</text></g>`

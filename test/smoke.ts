@@ -106,6 +106,13 @@ h = await get("/export/login")
 assert.match(h.body, /data-design-system/); assert.equal(h.res.headers.get("content-disposition")?.includes("login.html"), true)
 assert.ok(!/href="\/ds\//.test(h.body))
 h = await get("/view/checkout-architecture"); assert.match(h.body, /<svg/)
+assert.doesNotMatch(h.body, /class="sd-edge" d="[^"]* C/, "edges are orthogonal by default")
+assert.match(h.body, /class="sd-edge" d="M[^"]* L/)
+{
+  const { renderSystemDesign } = await import("../src/render/system-design.js")
+  const curved = renderSystemDesign({ title: "c", routing: "curved", nodes: [{ id: "a", label: "A" }, { id: "b", label: "B" }], edges: [{ from: "a", to: "b" }] })
+  assert.match(curved, /class="sd-edge" d="M[^"]* C/)
+}
 await writeFile(path.join(dir, "arch.html"), h.body)
 await writeFile(path.join(dir, "ds.html"), (await get("/view/acme-ui")).body)
 await writeFile(path.join(dir, "login.html"), (await get("/view/login")).body)

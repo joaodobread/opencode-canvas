@@ -51,7 +51,7 @@ The Review button in the canvas checks contrast, alt text, labels, text size, to
 
 ## Flows
 
-For multi-screen flows, create each screen with its own \`canvas_screen\` call and a clear title. The user sees them all together under **All screens** in the canvas (each at its device size), so keep device and design system consistent across the flow.
+For multi-screen flows, create each screen with its own \`canvas_screen\` call and a clear title. The user sees them all together on the **Board** in the canvas (each at its device size), so keep device and design system consistent across the flow.
 
 ## Implementing in the project
 
@@ -78,4 +78,5 @@ The user can also press Edit in the browser to change text, colors, sizes and sp
 - Use \`group\` for boundaries (Client, Edge, Backend, Data) and \`style: "dashed"\` for async edges.
 - Label edges with protocols or payloads. Keep it to roughly 6-20 nodes; split bigger systems into several diagrams.
 - Add \`notes\` for the key trade-offs and scaling decisions.
+- Edges are straight lines with rounded corners by default. Only pass \`routing: "curved"\` (bezier) when the user asks for curved lines.
 `

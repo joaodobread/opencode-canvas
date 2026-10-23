@@ -11,11 +11,17 @@ export const VIEWER_HTML = String.raw`<!doctype html>
   --ok:#16a34a;--warn:#d97706;--bad:#dc2626;--bubble:#f2f2f5;
   --shadow:0 8px 28px rgba(20,20,35,.14);--ring:0 0 0 3px rgba(91,91,214,.18);
 }
-@media (prefers-color-scheme:dark){:root{
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
   --bg:#0d0d10;--panel:#141418;--text:#ececf1;--muted:#8a8a96;--border:#26262d;--hover:#1c1c22;
   --accent:#8f8ff7;--accent-soft:#222242;--on-accent:#0d0d10;--stage:#0a0a0d;--dots:#23232a;
   --bubble:#1c1c22;--shadow:0 8px 28px rgba(0,0,0,.5);--ring:0 0 0 3px rgba(143,143,247,.22);
 }}
+:root[data-theme="dark"]{
+  --bg:#0d0d10;--panel:#141418;--text:#ececf1;--muted:#8a8a96;--border:#26262d;--hover:#1c1c22;
+  --accent:#8f8ff7;--accent-soft:#222242;--on-accent:#0d0d10;--stage:#0a0a0d;--dots:#23232a;
+  --bubble:#1c1c22;--shadow:0 8px 28px rgba(0,0,0,.5);--ring:0 0 0 3px rgba(143,143,247,.22);
+}
+:root[data-theme="light"]{color-scheme:light}:root[data-theme="dark"]{color-scheme:dark}
 *{box-sizing:border-box}
 html,body{height:100%;margin:0}
 body{display:grid;grid-template-columns:256px minmax(0,1fr) auto;background:var(--bg);color:var(--text);font:14px/1.45 ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;-webkit-font-smoothing:antialiased}
@@ -36,6 +42,7 @@ aside{display:flex;flex-direction:column;background:var(--panel);border-right:1p
 .search kbd{position:absolute;right:8px;top:7px}
 nav{flex:1;overflow:auto;padding:4px 8px 12px}
 .group{margin-top:12px}
+.group.pinned{margin-top:4px;padding-bottom:10px;border-bottom:1px solid var(--border)}
 .group h3{margin:0;padding:4px 10px 6px;font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--muted);display:flex;justify-content:space-between}
 .item{display:flex;align-items:center;gap:10px;width:100%;text-align:left;height:34px;padding:0 10px;border:0;border-radius:8px;background:transparent;color:var(--text)}
 .item svg{color:var(--muted)}
@@ -239,7 +246,7 @@ iframe{display:block;width:100%;height:100%;border:0;background:#fff}
 <body>
 <aside>
   <div class="brand"><span class="logo" data-i="layers" data-s="14"></span>Canvas</div>
-  <div class="proj" id="proj"><button class="projbtn" id="projbtn" title="Switch project"><span class="pi" data-i="folder" data-s="13"></span><span class="t" id="projname">All designs</span><span class="n" id="projn"></span><span data-i="chev" data-s="14"></span></button><div class="menu" id="pmenu" hidden></div></div>
+  <div class="proj" id="proj"><button class="projbtn" id="projbtn" title="Switch project"><span class="pi" data-i="folder" data-s="13"></span><span class="t" id="projname">All projects</span><span class="n" id="projn"></span><span data-i="chev" data-s="14"></span></button><div class="menu" id="pmenu" hidden></div></div>
   <div class="search"><span data-i="search" data-s="14"></span><input id="q" placeholder="Search designs" autocomplete="off"><kbd>/</kbd></div>
   <nav id="nav"></nav>
   <div class="foot"><span id="live" class="live off"></span><span id="livet">Connecting</span><span class="spacer"></span><span><kbd>C</kbd> comment</span></div>
@@ -346,7 +353,10 @@ iframe{display:block;width:100%;height:100%;border:0;background:#fff}
   function paintIcons(root){[].forEach.call((root||document).querySelectorAll('[data-i]'),function(e){e.innerHTML=icon(e.getAttribute('data-i'),+e.getAttribute('data-s')||16);e.removeAttribute('data-i')})}
 
   var stored='all';try{stored=localStorage.getItem('canvas.project')||'all'}catch(e){}
-  var state={live:null,project:stored,projects:[],all:[],variants:{},items:[],comments:[],current:null,device:null,theme:'auto',query:'',mode:false,panel:false,filter:'open',active:null,draft:null,replies:{},missing:{},ready:false,scroll:{},restore:null,issues:null,reviewing:false,edit:false,view:'comments',sel:null,own:{},undo:{},redo:{},preview:null,versions:[],chain:Promise.resolve(),pending:null,pt:0};
+  var storedTheme='auto';try{storedTheme=localStorage.getItem('canvas.theme')||'auto'}catch(e){}
+  if(storedTheme!=='light'&&storedTheme!=='dark')storedTheme='auto';
+  if(storedTheme!=='auto')document.documentElement.setAttribute('data-theme',storedTheme);
+  var state={live:null,project:stored,projects:[],all:[],variants:{},items:[],comments:[],current:null,device:null,theme:storedTheme,query:'',mode:false,panel:false,filter:'open',active:null,draft:null,replies:{},missing:{},ready:false,scroll:{},restore:null,issues:null,reviewing:false,edit:false,view:'comments',sel:null,own:{},undo:{},redo:{},preview:null,versions:[],chain:Promise.resolve(),pending:null,pt:0};
   var TAB=Math.random().toString(36).slice(2,10);
   var BOARD={screen:1,component:1,prototype:1,document:1};
   var EDITABLE={screen:1,component:1,prototype:1,document:1};
@@ -385,7 +395,7 @@ iframe{display:block;width:100%;height:100%;border:0;background:#fff}
     });
     var boardable=out.filter(function(a){return BOARD[a.kind]});
     var pj=projectOf(state.project);
-    if(boardable.length>1)out.push({id:'@board',kind:'board',title:pj?'All screens \u00b7 '+pj.name:'All screens',revision:boardable.length,updatedAt:0,createdAt:0,members:boardable});
+    if(boardable.length>1)out.push({id:'@board',kind:'board',title:pj?'Board \u00b7 '+pj.name:'Board',revision:boardable.length,updatedAt:0,createdAt:0,members:boardable});
     return out;
   }
   function projectOf(id){return state.projects.filter(function(p){return p.id===id})[0]}
@@ -409,7 +419,7 @@ iframe{display:block;width:100%;height:100%;border:0;background:#fff}
   }
   function renderProject(){
     var pj=projectOf(state.project);
-    $('projname').textContent=pj?pj.name:state.project===''?'No project':'All designs';
+    $('projname').textContent=pj?pj.name:state.project===''?'No project':'All projects';
     $('projn').textContent=String(countIn(state.project));
   }
   function menuItem(menu,iconName,label,count,on,cls){
@@ -429,7 +439,7 @@ iframe{display:block;width:100%;height:100%;border:0;background:#fff}
   function openProjectMenu(){
     var m=$('pmenu');if(!m.hidden){closeMenus();return}
     closeMenus();m.textContent='';
-    menuItem(m,'stack','All designs',countIn('all'),state.project==='all').onclick=function(){setScope('all')};
+    menuItem(m,'stack','All projects',countIn('all'),state.project==='all').onclick=function(){setScope('all')};
     if(state.projects.length){
       var hd=h('div','mh','Projects');m.appendChild(hd);
       state.projects.forEach(function(p){menuItem(m,'folder',p.name,countIn(p.id),state.project===p.id).onclick=function(){setScope(p.id)}});
@@ -481,7 +491,7 @@ iframe{display:block;width:100%;height:100%;border:0;background:#fff}
     var shown=state.items.filter(function(a){return!term||(a.title+' '+a.id+' '+a.kind).toLowerCase().indexOf(term)>=0});
     if(!state.items.length){
       var e=h('div','empty'),pj=projectOf(state.project);
-      if(pj){e.appendChild(h('b',null,'\u201c'+pj.name+'\u201d is empty'));e.appendChild(h('span',null,'Ask the agent to design something in this project, or move a design here from All designs.'))}
+      if(pj){e.appendChild(h('b',null,'\u201c'+pj.name+'\u201d is empty'));e.appendChild(h('span',null,'Ask the agent to design something in this project, or move a design here from All projects.'))}
       else if(state.project===''&&state.all.length)e.innerHTML='<b>Everything is in a project</b>Designs without a project show up here.';
       else e.innerHTML='<b>Nothing here yet</b>Ask the agent to create a design system or a screen with the <code>canvas</code> tools.';
       nav.appendChild(e);return;
@@ -490,21 +500,21 @@ iframe{display:block;width:100%;height:100%;border:0;background:#fff}
     KINDS.forEach(function(k){
       var list=shown.filter(function(a){return a.kind===k[0]});
       if(!list.length)return;
-      var g=h('div','group');
-      var hd=h('h3');hd.appendChild(h('span',null,k[1]));hd.appendChild(h('span',null,String(list.length)));g.appendChild(hd);
+      var g=h('div','group'+(k[0]==='board'?' pinned':''));
+      if(k[0]!=='board'){var hd=h('h3');hd.appendChild(h('span',null,k[1]));hd.appendChild(h('span',null,String(list.length)));g.appendChild(hd)}
       list.forEach(function(a){
         var b=h('button','item'+(a.id===state.current?' active':''));
         b.innerHTML=icon(KIND_ICON[a.kind]||'doc',16);
         b.appendChild(h('span','t',a.title));
         var n=openCount(a.id);if(n)b.appendChild(h('span','cc',String(n)));
-        else b.appendChild(h('span','rev',a.kind==='variations'?'new':a.kind==='board'?String(a.revision):'v'+a.revision));
+        else b.appendChild(h('span','rev',a.kind==='variations'?'new':a.kind==='board'?a.revision+' screens':'v'+a.revision));
         if(a.kind!=='board'){
           var mv=h('span','mv');mv.innerHTML=icon('folder',14);mv.title='Move to project';
           mv.onclick=function(ev){ev.stopPropagation();openMoveMenu(a,mv,b)};
           b.appendChild(mv);
           b.oncontextmenu=function(ev){ev.preventDefault();openMoveMenu(a,mv,b)};
         }
-        b.title=a.kind==='board'?'See every screen on one canvas':a.kind==='variations'?'Compare '+state.variants[a.group].length+' variations':a.id+' \u00b7 v'+a.revision;b.onclick=function(){select(a.id)};g.appendChild(b);
+        b.title=a.kind==='board'?'Every screen side by side on one canvas, like a Figma page':a.kind==='variations'?'Compare '+state.variants[a.group].length+' variations':a.id+' \u00b7 v'+a.revision;b.onclick=function(){select(a.id)};g.appendChild(b);
       });
       nav.appendChild(g);
     });
@@ -543,14 +553,15 @@ iframe{display:block;width:100%;height:100%;border:0;background:#fff}
     }
     bar.hidden=false;
     var cmp=a.kind==='variations'||a.kind==='board';
-    dock.hidden=cmp;
+    dock.hidden=false;
+    if(cmp){$('devices').hidden=true;$('dsep').hidden=true;$('dsize').textContent=''}
     ['emode','undo','redo','cmode','cpanel','hbtn','impl','rbtn'].forEach(function(id){$(id).hidden=cmp});
     $('open').hidden=$('download').hidden=cmp;
     if(cmp){
       $('title').textContent=a.title;$('kico').innerHTML=icon(KIND_ICON[a.kind],17);
       $('sub').textContent=a.kind==='board'?'Drag to pan \u00b7 Ctrl/Cmd+scroll to zoom \u00b7 click a screen to scroll it \u00b7 double-click to open':'Pick the direction you like. The others are discarded.';
       $('pv').hidden=true;state.panel=false;$('panel').hidden=true;
-      if(a.kind==='board')renderBoard(a);else renderCompare(a);return;
+      if(a.kind==='board')renderBoard(a);else renderCompare(a);applyTheme();return;
     }
     $('cmode').hidden=false;$('cpanel').hidden=false;$('hbtn').hidden=false;
     $('title').textContent=a.title;
@@ -561,7 +572,6 @@ iframe{display:block;width:100%;height:100%;border:0;background:#fff}
     var editable=!!EDITABLE[a.kind];
     $('emode').hidden=!editable;$('impl').hidden=!editable;$('rbtn').hidden=!editable;$('undo').hidden=!editable;$('redo').hidden=!editable;
     renderPreviewBar(a);updateUndo();
-    [].forEach.call($('themes').children,function(b){b.classList.toggle('on',b.getAttribute('data-t')===state.theme)});
     var previewing=state.preview&&state.preview.id===a.id;
     var url=q('/view/'+encodeURIComponent(a.id)+'?inspect=1&v='+a.revision+(previewing?'&rev='+state.preview.rev:''));
     $('open').href=q('/view/'+encodeURIComponent(a.id));
@@ -614,7 +624,7 @@ iframe{display:block;width:100%;height:100%;border:0;background:#fff}
       var view=h('div','vview'),dev=v.device||'responsive',sz=VSIZE[dev]||VSIZE.responsive;
       view.setAttribute('data-w',sz[0]);view.setAttribute('data-h',sz[1]);
       var f=document.createElement('iframe');f.setAttribute('sandbox','allow-scripts');f.title=v.title;f.style.width=sz[0]+'px';f.style.height=sz[1]+'px';
-      f.src=q('/view/'+encodeURIComponent(v.id)+'?v='+v.revision);
+      f.onload=themeFrame;f.src=q('/view/'+encodeURIComponent(v.id)+'?board=1&v='+v.revision);
       view.appendChild(f);
       view.title='Open this variation full size';
       view.onclick=function(){window.open(q('/view/'+encodeURIComponent(v.id)),'_blank','noopener')};
@@ -666,7 +676,7 @@ iframe{display:block;width:100%;height:100%;border:0;background:#fff}
       ab.appendChild(h('div','al',it.a.title));
       var fr=h('div','af'),f=document.createElement('iframe');
       f.setAttribute('sandbox','allow-scripts');f.title=it.a.title;f.setAttribute('data-rev',it.a.revision);
-      f.src=q('/view/'+encodeURIComponent(it.a.id)+'?board=1&v='+it.a.revision);
+      f.onload=themeFrame;f.src=q('/view/'+encodeURIComponent(it.a.id)+'?board=1&v='+it.a.revision);
       fr.appendChild(f);
       fr.appendChild(h('div','ah'));
       ab.appendChild(fr);world.appendChild(ab);
@@ -751,12 +761,19 @@ iframe{display:block;width:100%;height:100%;border:0;background:#fff}
   function pinList(){
     return designComments().filter(function(c){return c.status==='open'&&c.anchor}).map(function(c){return{id:c.id,n:numberOf(c),selector:c.anchor.selector}});
   }
+  function themeFrame(){try{this.contentWindow.postMessage({canvas:1,type:'theme',value:state.theme},'*')}catch(e){}}
+  function applyTheme(){
+    var r=document.documentElement;if(state.theme==='auto')r.removeAttribute('data-theme');else r.setAttribute('data-theme',state.theme);
+    [].forEach.call($('themes').children,function(b){b.classList.toggle('on',b.getAttribute('data-t')===state.theme)});
+    post({type:'theme',value:state.theme});
+    [].forEach.call(stage.querySelectorAll('.board iframe,.compare iframe'),function(f){themeFrame.call(f)});
+  }
   function syncFrame(){
     stage.classList.toggle('commenting',state.mode);
     var live=!state.preview;
     post({type:'mode',on:state.mode&&live});
     post({type:'edit',on:state.edit&&live});
-    post({type:'theme',value:state.theme});
+    applyTheme();
     post({type:'pins',pins:pinList(),active:state.active});
     var m=$('cmode');m.classList.toggle('on',state.mode);$('cmodet').textContent=state.mode?'Pick an element':'Comment';
     $('emode').classList.toggle('on',state.edit);$('emodet').textContent=state.edit?'Editing':'Edit';
@@ -1270,7 +1287,7 @@ iframe{display:block;width:100%;height:100%;border:0;background:#fff}
   };
   $('q').oninput=function(e){state.query=e.target.value;renderNav()};
   $('devices').onclick=function(e){var b=e.target.closest('button'),d=b&&b.getAttribute('data-d');if(d){state.device=d;renderStage(false)}};
-  $('themes').onclick=function(e){var b=e.target.closest('button'),t=b&&b.getAttribute('data-t');if(t){state.theme=t;renderStage(false)}};
+  $('themes').onclick=function(e){var b=e.target.closest('button'),t=b&&b.getAttribute('data-t');if(t){state.theme=t;try{localStorage.setItem('canvas.theme',t)}catch(x){}applyTheme()}};
   $('pfilter').onclick=function(e){var f=e.target.getAttribute&&e.target.getAttribute('data-f');if(f){state.filter=f;renderThreads()}};
   $('cmode').onclick=function(){setMode(!state.mode)};
   $('emode').onclick=function(){setEdit(!state.edit)};
