@@ -71,6 +71,10 @@ Ask for options (\"show me three directions for the pricing page\") and the agen
 
 Press **Edit** (or `E`) on a screen, component, prototype or document. Click an element to change its color, background, font, size, weight, alignment, line height, letter spacing, radius, opacity and spacing with sliders and inputs. Double-click text (or press Enter on a selected one) to type in place. Every change is written into the design source: text is replaced where it lives and style changes go into one `<style data-canvas-edits>` block. `Reset` clears the style changes of the selected element. Generated designs (design systems and diagrams) are not hand-editable; ask the agent.
 
+## Review
+
+The shield button audits the open design in place: text contrast (WCAG AA), missing image alt text, controls and fields without names or labels, tiny text, small touch targets and skipped heading levels. Click a finding to highlight the element, or send one (or all of them) to the agent as a comment to fix.
+
 ## Board
 
 With two or more screens, the sidebar shows an **All screens** entry: every screen, component, prototype and document on one infinite canvas, each at its device size. Drag to pan, `Ctrl/Cmd` + scroll (or pinch) to zoom, **Fit** to see everything, and double-click a screen (or click its name) to open it. Screens update live as the agent changes them.
