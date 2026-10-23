@@ -7,6 +7,7 @@ import { prepareDocument } from "./render/document.js"
 import { isValidId, type Artifact, type ChangeEvent, type Store } from "./store.js"
 import { EDITABLE_KINDS, applyEdits, parseOps } from "./edit.js"
 import { buildZip, renderPdf } from "./export.js"
+import { handoffPrompt } from "./handoff.js"
 import { VIEWER_HTML } from "./viewer.js"
 
 export interface CanvasServer {
@@ -23,6 +24,8 @@ export interface ServerOptions {
   host?: string
   /** Require ?token= (or the cookie it sets) on every request. */
   token?: string
+  /** Sends a prompt to the agent session. Returns false when no session is reachable. */
+  handoff?: (prompt: string) => Promise<boolean>
 }
 
 const SECURITY = {
@@ -124,6 +127,27 @@ export async function startServer(store: Store, comments: CommentStore, options:
     const text = typeof body.text === "string" ? body.text : ""
     const origin = typeof body.origin === "string" ? body.origin.slice(0, 40) : undefined
     try {
+      const impl = /^\/api\/handoff\/([a-z0-9-]+)$/.exec(path)
+      if (impl) {
+        if (method !== "POST") return json(res, 405, { error: "Method not allowed" })
+        const artifact = store.get(impl[1]!)
+        if (!artifact) return json(res, 404, { error: `No design with id "${impl[1]}".` })
+        if (!(EDITABLE_KINDS as readonly string[]).includes(artifact.kind)) {
+          return json(res, 400, { error: `${artifact.kind} designs cannot be handed off. Pick a screen, component, prototype or document.` })
+        }
+        const html = await store.html(artifact.id)
+        if (html === undefined) return json(res, 404, { error: "The HTML for this design is missing on disk." })
+        const ds = artifact.designSystem ? store.get(artifact.designSystem) : undefined
+        const usage = (ds?.data as { usage?: string } | undefined)?.usage
+        const prompt = handoffPrompt({
+          artifact,
+          html,
+          designSystem: ds && ds.kind === "design-system" ? { id: ds.id, title: ds.title, usage } : undefined,
+          note: text.trim().slice(0, 2000) || undefined,
+        })
+        const sent = (await options.handoff?.(prompt)) ?? false
+        return json(res, sent ? 200 : 409, sent ? { sent: true } : { error: "No agent session is reachable. Send a message in OpenCode first, then try again." })
+      }
       const group = /^\/api\/variations\/([a-z0-9-]+)\/(pick|discard)$/.exec(path)
       if (group) {
         if (method !== "POST") return json(res, 405, { error: "Method not allowed" })

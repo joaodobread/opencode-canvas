@@ -13,7 +13,9 @@ await store.init()
 const comments = new CommentStore(path.join(dir, "canvas"), store)
 const delivered: string[] = []
 comments.deliver = async (c, m) => { delivered.push(`${c.id}:${m.text}`); return true }
-const server = await startServer(store, comments, { port: 0 })
+const handoffs: string[] = []
+let sessionUp = false
+const server = await startServer(store, comments, { port: 0, handoff: async (text) => { if (!sessionUp) return false; handoffs.push(text); return true } })
 const runtime = {
   store,
   comments,
@@ -253,6 +255,16 @@ if (findChrome()) {
 } else assert.equal(pdf.status, 500)
 assert.equal((await fetch(base + "/pdf/nope")).status, 404)
 await run("delete", { id: "doc" })
+
+// handoff
+await run("screen", { id: "ship", title: "Ship it", html: "<h1 class='hero'>Ship</h1>" })
+assert.equal((await post("/api/handoff/ship", {})).res.status, 409)
+sessionUp = true
+assert.equal((await post("/api/handoff/ship", { text: "use the app router" })).res.status, 200)
+assert.match(handoffs[0]!, /use the app router/); assert.match(handoffs[0]!, /<h1 class='hero'>Ship<\/h1>/); assert.match(handoffs[0]!, /Colors \(CSS vars\)/)
+assert.equal((await post("/api/handoff/acme-ui", {})).res.status, 400)
+assert.equal((await post("/api/handoff/nope", {})).res.status, 404)
+await run("delete", { id: "ship" })
 
 // delete protection
 await assert.rejects(run("delete", { id: "acme-ui" }), /used by/)
