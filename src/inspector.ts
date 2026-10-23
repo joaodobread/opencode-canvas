@@ -1,8 +1,8 @@
 /**
  * Script injected into previews shown inside the canvas viewer. It runs inside a fully sandboxed iframe
  * (opaque origin) and talks to the viewer only through postMessage:
- *   viewer -> frame: mode, theme, pins, focus, restore, edit, select, style
- *   frame -> viewer: ready, scroll, pick, pin-click, missing, selected, text-edit, undo, redo, cancel
+ *   viewer -> frame: mode, theme, pins, focus, restore, edit, select, style, audit, reveal
+ *   frame -> viewer: ready, scroll, pick, pin-click, missing, selected, text-edit, undo, redo, cancel, audit
  */
 export const INSPECTOR_JS = String.raw`(function(){
 if(window.__canvasInspector)return;window.__canvasInspector=1;
@@ -28,7 +28,9 @@ activeBox.style.cssText='position:fixed;pointer-events:none;border:2px dashed #4
 var pinLayer=document.createElement('div');
 var selBox=document.createElement('div');
 selBox.style.cssText='position:fixed;pointer-events:none;border:2px solid #4f46e5;border-radius:3px;display:none;box-shadow:0 0 0 1px rgba(255,255,255,.75)';
-host.appendChild(selBox);host.appendChild(activeBox);host.appendChild(hoverBox);host.appendChild(hoverTag);host.appendChild(pinLayer);
+var revBox=document.createElement('div');
+revBox.style.cssText='position:fixed;pointer-events:none;border:2px solid #dc2626;border-radius:3px;display:none;box-shadow:0 0 0 4px rgba(220,38,38,.18)';
+host.appendChild(revBox);host.appendChild(selBox);host.appendChild(activeBox);host.appendChild(hoverBox);host.appendChild(hoverTag);host.appendChild(pinLayer);
 document.documentElement.appendChild(host);
 
 function esc(s){return window.CSS&&CSS.escape?CSS.escape(s):String(s).replace(/[^a-zA-Z0-9_-]/g,'\\$&')}
@@ -205,6 +207,107 @@ document.addEventListener('keydown',function(e){
   else if(e.key==='Enter'&&sel){var r=textRoot(sel);if(r){e.preventDefault();startEdit(r)}}
 },true);
 
+function rgba(c){
+  var m=/rgba?\(([^)]+)\)/.exec(c||'');if(!m)return null;
+  var p=m[1].split(/[ ,\/]+/).filter(Boolean).map(parseFloat);
+  return {r:p[0],g:p[1],b:p[2],a:p.length>3?p[3]:1};
+}
+function over(f,b){var a=f.a;return {r:f.r*a+b.r*(1-a),g:f.g*a+b.g*(1-a),b:f.b*a+b.b*(1-a),a:1}}
+function lum(c){
+  var v=[c.r,c.g,c.b].map(function(x){x/=255;return x<=.03928?x/12.92:Math.pow((x+.055)/1.055,2.4)});
+  return .2126*v[0]+.7152*v[1]+.0722*v[2];
+}
+function ratio(a,b){var x=lum(a),y=lum(b);return (Math.max(x,y)+.05)/(Math.min(x,y)+.05)}
+function backdrop(el){
+  var stack=[],n=el;
+  while(n&&n.nodeType===1){
+    var cs=getComputedStyle(n);
+    if(cs.backgroundImage&&cs.backgroundImage!=='none')return null;
+    var c=rgba(cs.backgroundColor);
+    if(c&&c.a>0){stack.push(c);if(c.a>=1)break}
+    n=n.parentElement;
+  }
+  var base={r:255,g:255,b:255,a:1};
+  for(var i=stack.length-1;i>=0;i--)base=over(stack[i],base);
+  return base;
+}
+function hexOf(c){return '#'+[c.r,c.g,c.b].map(function(v){return ('0'+Math.round(v).toString(16)).slice(-2)}).join('')}
+function accName(el){
+  var n=(el.getAttribute('aria-label')||el.getAttribute('title')||'').trim();
+  if(n)return n;
+  var lb=el.getAttribute('aria-labelledby');
+  if(lb){var r=document.getElementById(lb);if(r&&(r.textContent||'').trim())return r.textContent.trim()}
+  if((el.innerText||el.textContent||'').trim())return 'text';
+  if(el.querySelector('img[alt]:not([alt=""])'))return 'img';
+  if(el.localName==='input'&&(el.value||'').trim()&&/^(button|submit|reset)$/.test(el.type))return 'value';
+  return '';
+}
+function audit(){
+  var out=[],seen={};
+  function add(rule,sev,el,msg){
+    if(out.length>=60)return;
+    var sel=selector(el),key=rule+'|'+sel;
+    if(seen[key])return;seen[key]=1;
+    out.push({id:'a'+out.length,rule:rule,severity:sev,message:msg,selector:sel,tag:el.localName,label:label(el),text:text(el).slice(0,60)});
+  }
+  var all=document.body?document.body.querySelectorAll('*'):[];
+  var lastLevel=0,h1=0;
+  for(var i=0;i<all.length;i++){
+    var el=all[i];
+    if(el.closest('[data-canvas-ui]')||/^(script|style|svg|path|noscript|br)$/.test(el.localName)||el.closest('svg'))continue;
+    var r=el.getBoundingClientRect();
+    if(r.width===0&&r.height===0)continue;
+    var cs=getComputedStyle(el);
+    if(cs.visibility==='hidden'||cs.display==='none')continue;
+    var own='';
+    for(var k=0;k<el.childNodes.length;k++){if(el.childNodes[k].nodeType===3)own+=el.childNodes[k].nodeValue}
+    own=own.replace(/\s+/g,' ').trim();
+    if(own){
+      var fg=rgba(cs.color),bg=backdrop(el);
+      if(fg&&bg){
+        var op=parseFloat(cs.opacity);if(op<1)fg.a*=op;
+        var f=over(fg,bg),size=parseFloat(cs.fontSize),bold=parseInt(cs.fontWeight,10)>=700;
+        var large=size>=24||(size>=18.66&&bold),need=large?3:4.5,cr=ratio(f,bg);
+        if(cr<need)add('contrast',cr<need*0.7?'error':'warn',el,'Low contrast '+(Math.round(cr*10)/10)+':1 (needs '+need+':1): text '+hexOf(f)+' on '+hexOf(bg)+'.');
+      }
+      var fs=parseFloat(cs.fontSize);
+      if(fs<12)add('small-text','warn',el,'Text is '+Math.round(fs*10)/10+'px. Keep body text at 12px or larger (14-16px is better).');
+    }
+    var tag=el.localName;
+    if(tag==='img'&&!el.hasAttribute('alt'))add('alt','error',el,'Image has no alt text. Add a description, or alt="" if it is decorative.');
+    if(/^h[1-6]$/.test(tag)){
+      var lv=parseInt(tag.charAt(1),10);
+      if(lv===1)h1++;
+      if(lastLevel&&lv>lastLevel+1)add('heading-order','warn',el,'Heading jumps from h'+lastLevel+' to h'+lv+'. Do not skip levels.');
+      lastLevel=lv;
+    }
+    var interactive=tag==='button'||tag==='a'&&el.hasAttribute('href')||tag==='select'||tag==='textarea'||(tag==='input'&&el.type!=='hidden')||el.getAttribute('role')==='button';
+    if(interactive){
+      if((tag==='button'||tag==='a'||el.getAttribute('role')==='button')&&!accName(el))add('name','error',el,'Control has no accessible name. Add text or an aria-label.');
+      if(/^(input|select|textarea)$/.test(tag)&&!/^(button|submit|reset|image)$/.test(el.type||'')){
+        var labelled=el.getAttribute('aria-label')||el.getAttribute('aria-labelledby')||el.closest('label')||(el.id&&document.querySelector('label[for="'+esc(el.id)+'"]'));
+        if(!labelled)add('label','warn',el,'Form field has no label. A placeholder alone disappears while typing.');
+      }
+      if(r.width<24||r.height<24)add('target','warn',el,'Touch target is '+Math.round(r.width)+'x'+Math.round(r.height)+'px. Make it at least 24x24px (44px on mobile).');
+    }
+  }
+  if(!h1&&document.body&&document.body.querySelector('h2,h3'))out.push({id:'a'+out.length,rule:'hierarchy',severity:'info',message:'There is no h1. Give the page one clear primary heading.',selector:'body',tag:'body',label:'body',text:''});
+  var weight={error:0,warn:1,info:2};
+  out.sort(function(a,b){return weight[a.severity]-weight[b.severity]});
+  post({type:'audit',issues:out});
+}
+function reveal(sel){
+  var el=find(sel);if(!el)return;
+  if(el.scrollIntoView)el.scrollIntoView({block:'center',inline:'center',behavior:'smooth'});
+  var t0=Date.now();
+  (function tick(){
+    var n=find(sel);if(!n||Date.now()-t0>2600){revBox.style.display='none';return}
+    var b=n.getBoundingClientRect();
+    revBox.style.cssText+=';display:block;left:'+b.left+'px;top:'+b.top+'px;width:'+b.width+'px;height:'+b.height+'px';
+    requestAnimationFrame(tick);
+  })();
+}
+
 function setMode(on){
   mode=!!on;
   document.documentElement.classList.toggle('__cc',mode);
@@ -278,6 +381,8 @@ addEventListener('message',function(e){
   else if(d.type==='pins')setPins(d.pins,d.active);
   else if(d.type==='focus')focusPin(d.id);
   else if(d.type==='restore')window.scrollTo(d.x||0,d.y||0);
+  else if(d.type==='audit')audit();
+  else if(d.type==='reveal')reveal(d.selector);
   else if(d.type==='edit')setEdit(d.on);
   else if(d.type==='edit-text'){if(sel){var tr=textRoot(sel);if(tr)startEdit(tr)}}
   else if(d.type==='style')applyStyle(d.selector,d.props);

@@ -266,6 +266,9 @@ assert.equal((await post("/api/handoff/acme-ui", {})).res.status, 400)
 assert.equal((await post("/api/handoff/nope", {})).res.status, 404)
 await run("delete", { id: "ship" })
 
+// review script is served with the inspector
+h = await get("/view/login?inspect=1"); assert.match(h.body, /function audit\(\)/); assert.match(h.body, /Low contrast|contrast/)
+
 // delete protection
 await assert.rejects(run("delete", { id: "acme-ui" }), /used by/)
 await run("delete", { id: "login" })

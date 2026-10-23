@@ -40,6 +40,10 @@ The user can press Comment in the browser, click an element and describe a chang
 
 When the user wants options, asks \"show me a few directions\" or is undecided, use \`canvas_variations\` instead of several \`canvas_screen\` calls. Make the options genuinely different (layout, hierarchy, tone), label each one, and keep content realistic. The user picks in the browser; the chosen one becomes the design with the given id, and then you keep iterating with \`canvas_edit\`.
 
+## Review
+
+The Review button in the canvas checks contrast, alt text, labels, text size, touch targets and heading order. When the user sends findings as a comment, fix each one with \`canvas_edit\`, keeping the look intact, and reply with a summary. Aim for these on every screen you make: body text 4.5:1 contrast, labelled fields, one h1.
+
 ## Flows
 
 For multi-screen flows, create each screen with its own \`canvas_screen\` call and a clear title. The user sees them all together under **All screens** in the canvas (each at its device size), so keep device and design system consistent across the flow.
