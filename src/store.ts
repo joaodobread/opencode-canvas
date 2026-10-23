@@ -22,13 +22,21 @@ export interface Artifact {
   /** Group id when this design is one of several variations of the same screen. */
   variantOf?: string
   variantLabel?: string
+  /** Id of the project (folder) this design belongs to. */
+  project?: string
   createdAt: number
   updatedAt: number
   revision: number
 }
 
+export interface Project {
+  id: string
+  name: string
+  createdAt: number
+}
+
 export interface ChangeEvent {
-  type: "upsert" | "remove" | "touch"
+  type: "upsert" | "remove" | "touch" | "projects"
   id: string
   focus?: boolean
   revision?: number
@@ -69,6 +77,7 @@ export interface SaveInput {
   origin?: string
   variantOf?: string
   variantLabel?: string
+  project?: string
 }
 
 const MAX_HTML_BYTES = 4 * 1024 * 1024
@@ -91,6 +100,7 @@ export function isValidId(id: string): boolean {
 
 export class Store extends EventEmitter {
   private artifacts = new Map<string, Artifact>()
+  private folders = new Map<string, Project>()
   private starting?: Promise<void>
   private queue: Promise<unknown> = Promise.resolve()
   private watcher?: FSWatcher
@@ -202,9 +212,14 @@ export class Store extends EventEmitter {
   private async load() {
     await mkdir(this.dir, { recursive: true })
     try {
-      const parsed = JSON.parse(await readFile(this.indexFile, "utf8")) as { artifacts?: Artifact[] }
+      const parsed = JSON.parse(await readFile(this.indexFile, "utf8")) as { artifacts?: Artifact[]; projects?: Project[] }
+      for (const project of parsed.projects ?? []) {
+        if (project && isValidId(project.id)) this.folders.set(project.id, project)
+      }
       for (const artifact of parsed.artifacts ?? []) {
-        if (artifact && isValidId(artifact.id)) this.artifacts.set(artifact.id, artifact)
+        if (!artifact || !isValidId(artifact.id)) continue
+        if (artifact.project && !this.folders.has(artifact.project)) delete artifact.project
+        this.artifacts.set(artifact.id, artifact)
       }
     } catch {
       // first run or unreadable index: rebuild from the html files below
@@ -304,7 +319,7 @@ export class Store extends EventEmitter {
 
   private async persistIndex() {
     const tmp = `${this.indexFile}.tmp`
-    const body = JSON.stringify({ version: 1, artifacts: [...this.artifacts.values()] }, null, 2)
+    const body = JSON.stringify({ version: 1, projects: this.projects(), artifacts: [...this.artifacts.values()] }, null, 2)
     await writeFile(tmp, body)
     await rename(tmp, this.indexFile)
   }
@@ -348,10 +363,13 @@ export class Store extends EventEmitter {
     if (existing && existing.kind !== input.kind) {
       throw new Error(`Id "${id}" is already used by a ${existing.kind}. Pick another id.`)
     }
+    const project = input.project === "" ? undefined : (input.project ?? existing?.project)
+    if (project && !this.folders.has(project)) throw new Error(`No project with id "${project}".`)
     const now = Date.now()
     const artifact: Artifact = {
       id,
       kind: input.kind,
+      project,
       title: input.title,
       description: input.description ?? existing?.description,
       device: input.device ?? existing?.device,
@@ -407,6 +425,7 @@ export class Store extends EventEmitter {
       description: chosen.description,
       device: chosen.device,
       designSystem: chosen.designSystem,
+      project: base?.project ?? chosen.project ?? "",
       source: `variation ${chosen.variantLabel ?? id}`,
       origin,
     })
@@ -418,6 +437,91 @@ export class Store extends EventEmitter {
     const list = this.variants(group)
     for (const variant of list) await this.remove(variant.id)
     return list.length
+  }
+
+  projects(): Project[] {
+    return [...this.folders.values()].sort((a, b) => a.name.localeCompare(b.name))
+  }
+
+  project(id: string): Project | undefined {
+    return this.folders.get(id)
+  }
+
+  /** Finds a project by id or (case-insensitive) name. */
+  findProject(ref: string): Project | undefined {
+    const key = ref.trim().toLowerCase()
+    return this.folders.get(key) ?? this.projects().find((p) => p.name.toLowerCase() === key)
+  }
+
+  async createProject(name: string, id?: string): Promise<Project> {
+    await this.init()
+    const clean = name.trim().slice(0, 80)
+    if (!clean) throw new Error("Project name is required.")
+    const found = this.findProject(id ?? clean)
+    if (found) return found
+    let candidate = id ?? slug(clean)
+    if (!isValidId(candidate)) throw new Error(`Invalid project id "${candidate}". Use lowercase letters, digits and dashes.`)
+    for (let n = 2; this.folders.has(candidate); n++) candidate = `${slug(clean)}-${n}`
+    const project: Project = { id: candidate, name: clean, createdAt: Date.now() }
+    await this.enqueue(async () => {
+      this.folders.set(project.id, project)
+      await this.persistIndex()
+    })
+    this.emitChange({ type: "projects", id: project.id })
+    return project
+  }
+
+  async renameProject(id: string, name: string): Promise<Project> {
+    await this.init()
+    const project = this.folders.get(id)
+    if (!project) throw new Error(`No project with id "${id}".`)
+    const clean = name.trim().slice(0, 80)
+    if (!clean) throw new Error("Project name is required.")
+    project.name = clean
+    await this.enqueue(() => this.persistIndex())
+    this.emitChange({ type: "projects", id })
+    return project
+  }
+
+  /** Deletes the folder only; its designs move back to "No project". */
+  async removeProject(id: string): Promise<number> {
+    await this.init()
+    if (!this.folders.has(id)) throw new Error(`No project with id "${id}".`)
+    let moved = 0
+    await this.enqueue(async () => {
+      this.folders.delete(id)
+      for (const artifact of this.artifacts.values()) {
+        if (artifact.project === id) {
+          delete artifact.project
+          moved++
+        }
+      }
+      await this.persistIndex()
+    })
+    this.emitChange({ type: "projects", id })
+    return moved
+  }
+
+  /** Moves designs into a project (or out of any project when project is undefined). Variations follow their group. */
+  async move(ids: string[], project: string | undefined): Promise<string[]> {
+    await this.init()
+    if (project && !this.folders.has(project)) throw new Error(`No project with id "${project}".`)
+    const targets = new Set<string>()
+    for (const id of ids) {
+      if (!this.artifacts.has(id)) throw new Error(`No design with id "${id}".`)
+      targets.add(id)
+      for (const variant of this.variants(id)) targets.add(variant.id)
+    }
+    await this.enqueue(async () => {
+      for (const id of targets) {
+        const artifact = this.artifacts.get(id)!
+        if (project) artifact.project = project
+        else delete artifact.project
+      }
+      await this.persistIndex()
+    })
+    this.emitChange({ type: "projects", id: project ?? "" })
+    return [...targets]
   }
 
   async remove(id: string): Promise<boolean> {

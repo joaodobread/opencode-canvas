@@ -52,6 +52,7 @@ To work on a local checkout, run `npm install` in it and point `package` at the 
 | `canvas_restore`       | Go back to an earlier version (becomes a new revision).                  |
 | `canvas_comments`      | List comments the user left on designs in the browser.                   |
 | `canvas_reply`         | Answer a comment (shown in its thread) and optionally resolve it.        |
+| `canvas_project`       | Create, rename and delete projects (folders) and move designs into them. |
 
 Also adds a `/canvas <what to design>` command and a `canvas-design` skill.
 
@@ -62,6 +63,10 @@ The tools are reached through `execute` (Code Mode) by default, like other plugi
 Press **Comment** (or press `C`) in the preview, click any element and describe the change. The comment is sent to the OpenCode session that last used the canvas (or the most recent session of the project) with the element's selector, text and HTML. The agent edits the design and answers with `canvas_reply`; its reply and the resolved state appear in the thread, and numbered pins mark open comments on the design. Comments are stored in `comments.json` next to the designs. If no session is reachable the comment stays pending and can be retried from the panel.
 
 Viewer shortcuts: `/` search designs, `C` comment mode, `E` edit mode, `Ctrl/Cmd+Z` undo, `Esc` cancel, `Enter` send (Shift+Enter for a new line).
+
+## Projects
+
+Group designs by project so unrelated work does not end up in one list. The switcher at the top of the sidebar shows **All designs**, each project and **No project**, and lets you create, rename and delete projects (deleting a project keeps its designs). Hover a design (or right-click it) and use the folder button to move it. The agent files designs with the `project` option of the design tools or with `canvas_project`, and the canvas switches to the project it is working in. Design systems used by a project's screens show up in that project too, and **Export project as ZIP** exports only that project.
 
 ## Variations
 
@@ -77,7 +82,7 @@ The shield button audits the open design in place: text contrast (WCAG AA), miss
 
 ## Board
 
-With two or more screens, the sidebar shows an **All screens** entry: every screen, component, prototype and document on one infinite canvas, each at its device size. Drag to pan, `Ctrl/Cmd` + scroll (or pinch) to zoom, **Fit** to see everything, and double-click a screen (or click its name) to open it. Screens update live as the agent changes them.
+With two or more screens, the sidebar shows an **All screens** entry: every screen, component, prototype and document on one infinite canvas, each at its device size. Drag or scroll to pan, `Ctrl/Cmd` + scroll (or pinch) to zoom, **Fit** to see everything. Click a screen to make it active: it gets an outline and the mouse wheel scrolls its page instead of the board (click the background, **Done** or `Esc` to go back). Double-click a screen (or click its name) to open it. With a project selected, the board shows only that project. Screens update live as the agent changes them.
 
 ## Implement in project
 

@@ -17,6 +17,11 @@ The canvas plugin gives you tools (namespace \`canvas\`) that render designs as 
 - \`canvas_comments\` / \`canvas_reply\` - feedback the user pins on elements in the browser.
 - \`canvas_variations\` - 2-4 alternative directions of one screen, shown side by side; the user picks one.
 - \`canvas_history\` / \`canvas_restore\` - every revision is saved; list versions and go back to one (the restore becomes a new revision).
+- \`canvas_project\` - projects (folders) that group designs in the sidebar: create, rename, delete, move.
+
+## Projects
+
+Designs can be filed under projects so unrelated work does not pile up in one list. When the user names a product, client or app (or \`canvas_list\` shows projects), pass \`project\` (id or name; a new name creates it) to \`canvas_design_system\`, \`canvas_screen\`, \`canvas_variations\` and \`canvas_system_design\`. Keep every design of one product in the same project. The canvas switches to the project of the design you just changed. Use \`canvas_project\` with \`action: "move"\` to organize existing designs.
 
 ## Workflow
 

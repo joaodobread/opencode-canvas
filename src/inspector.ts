@@ -399,3 +399,13 @@ requestAnimationFrame(frame);
 post({type:'ready',loaded:document.readyState==='complete'});
 addEventListener('load',function(){post({type:'ready',loaded:true})});
 })();`
+
+/**
+ * Script for the artboards of the board view. The board catches wheel events itself (to pan and zoom)
+ * and forwards them to the active artboard:
+ *   viewer -> frame: scrollby {dx, dy}
+ */
+export const BOARD_FRAME_JS = String.raw`(function(){
+if(window.__canvasBoard)return;window.__canvasBoard=1;
+addEventListener('message',function(e){var d=e.data;if(e.source!==parent||!d||d.canvas!==1||d.type!=='scrollby')return;window.scrollBy(+d.dx||0,+d.dy||0)});
+})();`

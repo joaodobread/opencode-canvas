@@ -27,6 +27,11 @@ type Input = Record<string, unknown>
 
 const FREE_FORM = ["screen", "component", "prototype", "document"] as const
 
+const PROJECT_PROP = {
+  type: "string",
+  description: 'Project (folder) to file the design under, by id or name. A new name creates the project. "none" removes it from its project. Default: unchanged (new designs: no project).',
+}
+
 function fail(message: string): never {
   throw new ToolError({ message })
 }
@@ -90,9 +95,20 @@ export function createTools(runtime: Runtime) {
     return { id: latest?.id, auto: Boolean(latest) }
   }
 
+  /** Accepts a project id or name; unknown names create the project. "" or "none" means no project. */
+  const resolveProject = async (input: Input): Promise<string | undefined> => {
+    const ref = input.project
+    if (ref === undefined || ref === null) return undefined
+    if (typeof ref !== "string") fail('"project" must be a string.')
+    if (ref === "" || ref === "none") return ""
+    await store.init()
+    return (store.findProject(ref) ?? (await store.createProject(ref))).id
+  }
+
   const report = async (artifact: Artifact, created: boolean, extra: string[] = []) => {
     const url = await runtime.announce(artifact.id)
-    const lines = [`${created ? "Created" : "Updated"} ${describe(artifact)}.`, `Preview: ${url}`, ...extra]
+    const folder = artifact.project ? store.project(artifact.project) : undefined
+    const lines = [`${created ? "Created" : "Updated"} ${describe(artifact)}.`, `Preview: ${url}`, ...(folder ? [`Project: ${folder.name}.`] : []), ...extra]
     return {
       content: lines.join("\n"),
       metadata: { id: artifact.id, kind: artifact.kind, revision: artifact.revision, url },
@@ -137,6 +153,7 @@ export function createTools(runtime: Runtime) {
         spacingUnit: { type: "number", description: "Spacing unit in px (2-8, default 4)." },
         radius: { type: "number", description: "Base border radius in px (0-32, default 8)." },
         css: { type: "string", description: "Extra CSS appended after the generated styles (custom components)." },
+        project: PROJECT_PROP,
       },
       required: ["name"],
       additionalProperties: false,
@@ -175,6 +192,7 @@ export function createTools(runtime: Runtime) {
           description: tokens.description,
           html,
           data: { input: merged, css: extra, usage },
+          project: await resolveProject(input),
         })
         return report(artifact, created, [
           "",
@@ -204,6 +222,7 @@ export function createTools(runtime: Runtime) {
         device: { type: "string", enum: [...DEVICES], description: "Preview frame. Use mobile for phone layouts, desktop for 1280px pages. Default: responsive." },
         designSystem: { type: "string", description: 'Design system id, or "none" to opt out. Default: the most recent design system.' },
         description: { type: "string" },
+        project: PROJECT_PROP,
       },
       required: ["title", "html"],
       additionalProperties: false,
@@ -228,6 +247,7 @@ export function createTools(runtime: Runtime) {
           description: str(input, "description"),
           device: oneOf(input, "device", DEVICES) as Device | undefined,
           designSystem: ds.id,
+          project: await resolveProject(input),
         })
         const notes: string[] = []
         if (ds.id) notes.push(`Design system: ${ds.id}${ds.auto ? " (applied automatically)" : ""}.`)
@@ -287,6 +307,7 @@ export function createTools(runtime: Runtime) {
         },
         notes: { type: "array", items: { type: "string" }, description: "Short design notes shown under the diagram." },
         designSystem: { type: "string", description: 'Design system id for colors and fonts, "none" to opt out. Default: the most recent design system.' },
+        project: PROJECT_PROP,
       },
       required: ["title", "nodes", "edges"],
       additionalProperties: false,
@@ -322,6 +343,7 @@ export function createTools(runtime: Runtime) {
           device: "responsive",
           designSystem: ds,
           data: diagram,
+          project: await resolveProject(input),
         })
         return report(artifact, created, [`${diagram.nodes.length} nodes, ${diagram.edges.length} edges.`])
       })
@@ -371,24 +393,32 @@ export function createTools(runtime: Runtime) {
 
   const list = {
     name: "list",
-    description: "List the designs in the canvas (id, kind, title, revision, design system) and the preview URL.",
+    description: "List the designs in the canvas (id, kind, title, revision, design system, project) and the preview URL, plus the projects (folders) that exist.",
     input: {
       type: "object",
-      properties: { kind: { type: "string", enum: [...KINDS] } },
+      properties: {
+        kind: { type: "string", enum: [...KINDS] },
+        project: { type: "string", description: 'Only designs in this project (id or name), or "none" for designs outside any project.' },
+      },
       additionalProperties: false,
     },
     async execute(raw: unknown, context?: unknown) {
       runtime.track(context)
       return guard(async () => {
         await store.init()
-        const kind = oneOf(raw as Input, "kind", KINDS)
-        const items = store.list(kind)
+        const input = raw as Input
+        const kind = oneOf(input, "kind", KINDS)
+        const ref = str(input, "project")
+        const folder = ref && ref !== "none" ? (store.findProject(ref) ?? fail(`No project "${ref}".`)) : undefined
+        const items = store.list(kind).filter((a) => (ref === "none" ? !a.project : !folder || a.project === folder.id))
         const url = await runtime.urlFor()
-        if (!items.length) return { content: `The canvas is empty${kind ? ` (no ${kind} designs)` : ""}.\nPreview: ${url}` }
+        const projects = store.projects()
+        const header = projects.length ? [`Projects: ${projects.map((p) => `${p.name} (${p.id})`).join(", ")}.`] : []
+        if (!items.length) return { content: [...header, `The canvas is empty${kind || ref ? " for this filter" : ""}.`, `Preview: ${url}`].join("\n") }
         const rows = items.map(
-          (a) => `- ${a.id}: ${a.kind}, "${a.title}", v${a.revision}${a.variantOf ? `, variation of ${a.variantOf}` : ""}${a.designSystem ? `, uses ${a.designSystem}` : ""}${a.device && a.device !== "responsive" ? `, ${a.device}` : ""}`,
+          (a) => `- ${a.id}: ${a.kind}, "${a.title}", v${a.revision}${a.project ? `, project ${a.project}` : ""}${a.variantOf ? `, variation of ${a.variantOf}` : ""}${a.designSystem ? `, uses ${a.designSystem}` : ""}${a.device && a.device !== "responsive" ? `, ${a.device}` : ""}`,
         )
-        return { content: [`${items.length} design(s):`, ...rows, `Preview: ${url}`].join("\n") }
+        return { content: [...header, `${items.length} design(s):`, ...rows, `Preview: ${url}`].join("\n") }
       })
     },
     options: { namespace: "canvas" },
@@ -624,6 +654,7 @@ export function createTools(runtime: Runtime) {
         kind: { type: "string", enum: [...FREE_FORM], description: "Default: screen." },
         device: { type: "string", enum: [...DEVICES] },
         designSystem: { type: "string", description: 'Design system id, or "none". Default: the one used by the design, else the most recent.' },
+        project: PROJECT_PROP,
       },
       required: ["id", "title", "variants"],
       additionalProperties: false,
@@ -643,6 +674,7 @@ export function createTools(runtime: Runtime) {
         if (base && base.kind !== kind) fail(`Id "${group}" is already used by a ${base.kind}.`)
         const ds = resolveDesignSystem(input, kind, base)
         const device = oneOf(input, "device", DEVICES) as Device | undefined
+        const project = (await resolveProject(input)) ?? base?.project
         const parsed = items.map((entry, i) => {
           const item = entry as Input
           return { label: str(item, "label", true) ?? `Option ${i + 1}`, html: str(item, "html", true)! }
@@ -659,6 +691,7 @@ export function createTools(runtime: Runtime) {
             designSystem: ds.id,
             variantOf: group,
             variantLabel: item.label,
+            project,
           })
           ids.push(saved.artifact.id)
         }
@@ -676,7 +709,54 @@ export function createTools(runtime: Runtime) {
     options: { namespace: "canvas" },
   }
 
-  const tools: Info[] = [designSystem, screen, systemDesign, edit, list, get, remove, open, comments, reply, history, restore, variations]
+  const project = {
+    name: "project",
+    description:
+      "Organize designs into projects (folders) shown as collapsible groups in the canvas sidebar. Actions: create, rename, delete (designs inside move to \"No project\"; nothing is deleted), " +
+      "and move (file existing designs under a project, or out of any project with project \"none\"). Design tools also accept `project` directly.",
+    input: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["create", "rename", "delete", "move"] },
+        project: { type: "string", description: 'Project id or name. For move, "none" takes the designs out of their project.' },
+        name: { type: "string", description: "New name (create, rename)." },
+        ids: { type: "array", items: { type: "string" }, description: "Design ids to move." },
+      },
+      required: ["action"],
+      additionalProperties: false,
+    },
+    async execute(raw: unknown, context?: unknown) {
+      runtime.track(context)
+      return guard(async () => {
+        const input = raw as Input
+        const action = oneOf(input, "action", ["create", "rename", "delete", "move"] as const)!
+        await store.init()
+        const ref = str(input, "project")
+        if (action === "create") {
+          const name = str(input, "name") ?? ref ?? fail('"name" is required.')
+          const p = await store.createProject(name)
+          return { content: `Project "${p.name}" (id: ${p.id}) is ready. Pass project: "${p.id}" to design tools, or move designs into it.` }
+        }
+        if (action === "move") {
+          const ids = Array.isArray(input.ids) ? (input.ids as unknown[]).filter((v): v is string => typeof v === "string") : []
+          if (!ids.length) fail('"ids" needs at least one design id.')
+          const target = !ref || ref === "none" ? undefined : (store.findProject(ref) ?? (await store.createProject(ref)))
+          const moved = await store.move(ids, target?.id)
+          return { content: `Moved ${moved.join(", ")} ${target ? `to "${target.name}"` : "out of any project"}.` }
+        }
+        const p = (ref && store.findProject(ref)) || fail(`No project "${ref ?? ""}". Use canvas_list to see projects.`)
+        if (action === "rename") {
+          const renamed = await store.renameProject(p.id, str(input, "name", true)!)
+          return { content: `Renamed project ${p.id} to "${renamed.name}".` }
+        }
+        const moved = await store.removeProject(p.id)
+        return { content: `Deleted project "${p.name}". ${moved} design(s) moved to "No project".` }
+      })
+    },
+    options: { namespace: "canvas" },
+  }
+
+  const tools: Info[] = [designSystem, screen, systemDesign, edit, list, get, remove, open, comments, reply, history, restore, variations, project]
   return tools
 }
 
