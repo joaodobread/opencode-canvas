@@ -273,6 +273,11 @@ export function createTools(runtime: Runtime) {
         id: { type: "string" },
         description: { type: "string" },
         direction: { type: "string", enum: ["LR", "TB"], description: "LR = left to right (default), TB = top to bottom." },
+        routing: {
+          type: "string",
+          enum: ["orthogonal", "curved"],
+          description: "Edge shape. orthogonal (default) = straight lines with rounded corners. Use curved (bezier) only when the user asks for it.",
+        },
         nodes: {
           type: "array",
           minItems: 1,
@@ -321,6 +326,7 @@ export function createTools(runtime: Runtime) {
           title,
           description: str(input, "description"),
           direction: oneOf(input, "direction", ["LR", "TB"] as const),
+          routing: oneOf(input, "routing", ["orthogonal", "curved"] as const),
           nodes: (input.nodes as Diagram["nodes"] | undefined) ?? [],
           edges: (input.edges as Diagram["edges"] | undefined) ?? [],
           notes: input.notes as string[] | undefined,
