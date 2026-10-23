@@ -68,6 +68,12 @@ export default Plugin.define({
       server ??= startServer(store, comments, {
         port: typeof options.port === "number" ? options.port : 4317,
         host: typeof options.host === "string" ? options.host : "127.0.0.1",
+        handoff: async (text) => {
+          const sessionID = await findSession()
+          if (!sessionID) return false
+          await ctx.session.prompt({ sessionID, delivery: "queue", text } as never)
+          return true
+        },
         token: options.token === true ? generateToken() : typeof options.token === "string" ? options.token : undefined,
       }).catch((error) => {
         server = undefined

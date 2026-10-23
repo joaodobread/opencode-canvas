@@ -202,6 +202,7 @@ iframe{display:block;width:100%;height:100%;border:0;background:#fff}
     <button class="btn" id="emode" title="Edit text and styles directly" hidden><span data-i="pencil"></span><span id="emodet">Edit</span><kbd>E</kbd></button>
     <button class="btn" id="cmode" title="Click an element to comment on it"><span data-i="msgplus"></span><span id="cmodet">Comment</span><kbd>C</kbd></button>
     <button class="btn icon" id="cpanel" title="Show comments"><span data-i="comment"></span><span class="badge" id="cbadge" hidden>0</span></button>
+    <button class="btn primary" id="impl" title="Ask the agent to build this in your project" hidden><span data-i="code"></span>Implement</button>
     <button class="btn icon" id="hbtn" title="Version history"><span data-i="clock"></span></button>
     <span class="vsep"></span>
     <div class="menuwrap">
@@ -275,6 +276,7 @@ iframe{display:block;width:100%;height:100%;border:0;background:#fff}
     up:'<path d="M12 19V6M6 11.5L12 5.5l6 6"/>',
     trash:'<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-12M9 7V4h6v3"/>',
     columns:'<rect x="3.5" y="4" width="7" height="16" rx="1.5"/><rect x="13.5" y="4" width="7" height="16" rx="1.5"/>',
+    code:'<path d="M8 7l-5 5 5 5M16 7l5 5-5 5M14 4l-4 16"/>',
     undo:'<path d="M9 14L4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3"/>',
     redo:'<path d="M15 14l5-5-5-5M20 9H10a6 6 0 0 0 0 12h3"/>',
     pencil:'<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',
@@ -378,7 +380,7 @@ iframe{display:block;width:100%;height:100%;border:0;background:#fff}
     bar.hidden=false;
     var cmp=a.kind==='variations';
     dock.hidden=cmp;
-    ['emode','undo','redo','cmode','cpanel','hbtn'].forEach(function(id){$(id).hidden=cmp});
+    ['emode','undo','redo','cmode','cpanel','hbtn','impl'].forEach(function(id){$(id).hidden=cmp});
     $('open').hidden=$('download').hidden=cmp;
     if(cmp){
       $('title').textContent=a.title;$('kico').innerHTML=icon('columns',17);
@@ -393,7 +395,7 @@ iframe{display:block;width:100%;height:100%;border:0;background:#fff}
     var framed=!!FRAMED[a.kind];
     $('devices').hidden=!framed;$('dsep').hidden=!framed;
     var editable=!!EDITABLE[a.kind];
-    $('emode').hidden=!editable;$('undo').hidden=!editable;$('redo').hidden=!editable;
+    $('emode').hidden=!editable;$('impl').hidden=!editable;$('undo').hidden=!editable;$('redo').hidden=!editable;
     renderPreviewBar(a);updateUndo();
     [].forEach.call($('themes').children,function(b){b.classList.toggle('on',b.getAttribute('data-t')===state.theme)});
     var previewing=state.preview&&state.preview.id===a.id;
@@ -907,6 +909,12 @@ iframe{display:block;width:100%;height:100%;border:0;background:#fff}
   $('more').onclick=function(e){e.stopPropagation();$('menu').hidden=!$('menu').hidden};
   addEventListener('click',function(e){if(!$('menu').hidden&&!e.target.closest('.menuwrap'))closeMenu()});
   $('menu').onclick=closeMenu;
+  $('impl').onclick=function(){
+    var a=find(state.current);if(!a)return;
+    var note=window.prompt('Implement "'+a.title+'" in the project. Anything the agent should know? (optional)','');
+    if(note===null)return;
+    api('POST','/api/handoff/'+encodeURIComponent(a.id),{text:note}).then(function(){toast('Sent to the agent')}).catch(function(e){toast(e.message)});
+  };
   $('m-reload').onclick=function(){renderStage(true)};
   $('m-pdf').onclick=function(){
     var a=find(state.current);if(!a)return;

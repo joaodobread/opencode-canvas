@@ -40,6 +40,10 @@ The user can press Comment in the browser, click an element and describe a chang
 
 When the user wants options, asks \"show me a few directions\" or is undecided, use \`canvas_variations\` instead of several \`canvas_screen\` calls. Make the options genuinely different (layout, hierarchy, tone), label each one, and keep content realistic. The user picks in the browser; the chosen one becomes the design with the given id, and then you keep iterating with \`canvas_edit\`.
 
+## Implementing in the project
+
+The Implement button in the canvas sends you a prompt with the design HTML and the design-system class sheet. Rebuild the design with the project's own stack and components (do not paste the HTML), map the tokens to the project's theme, wire it into a route or component, and report what you created.
+
 ## Direct edits
 
 The user can also press Edit in the browser to change text, colors, sizes and spacing directly. Those changes are written into the design source: text is replaced in place, and style changes go into one \`<style data-canvas-edits>\` block before \`</body>\`. Keep that block when you rewrite a screen with \`canvas_screen\` (read it with \`canvas_get\` first), or the user's tweaks are lost; they can still be recovered with \`canvas_restore\`.
