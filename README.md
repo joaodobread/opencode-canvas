@@ -47,6 +47,7 @@ To work on a local checkout, run `npm install` in it and point `package` at the 
 | `canvas_system_design` | Architecture diagram from nodes/edges with automatic layout.             |
 | `canvas_edit`          | Exact-text replacement inside an existing design.                        |
 | `canvas_get` / `canvas_list` / `canvas_delete` / `canvas_open` | Manage designs. |
+| `canvas_variations`    | 2-4 alternative versions of a screen to compare side by side and pick.   |
 | `canvas_history`       | List the saved versions of a design.                                     |
 | `canvas_restore`       | Go back to an earlier version (becomes a new revision).                  |
 | `canvas_comments`      | List comments the user left on designs in the browser.                   |
@@ -61,6 +62,10 @@ The tools are reached through `execute` (Code Mode) by default, like other plugi
 Press **Comment** (or press `C`) in the preview, click any element and describe the change. The comment is sent to the OpenCode session that last used the canvas (or the most recent session of the project) with the element's selector, text and HTML. The agent edits the design and answers with `canvas_reply`; its reply and the resolved state appear in the thread, and numbered pins mark open comments on the design. Comments are stored in `comments.json` next to the designs. If no session is reachable the comment stays pending and can be retried from the panel.
 
 Viewer shortcuts: `/` search designs, `C` comment mode, `E` edit mode, `Ctrl/Cmd+Z` undo, `Esc` cancel, `Enter` send (Shift+Enter for a new line).
+
+## Variations
+
+Ask for options (\"show me three directions for the pricing page\") and the agent calls `canvas_variations`. The sidebar gets a **Compare variations** entry that shows every option side by side. **Choose** turns the pick into the design with the final id and discards the rest; **Discard all** drops the set and keeps the original.
 
 ## Direct editing
 

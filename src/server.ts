@@ -123,6 +123,13 @@ export async function startServer(store: Store, comments: CommentStore, options:
     const text = typeof body.text === "string" ? body.text : ""
     const origin = typeof body.origin === "string" ? body.origin.slice(0, 40) : undefined
     try {
+      const group = /^\/api\/variations\/([a-z0-9-]+)\/(pick|discard)$/.exec(path)
+      if (group) {
+        if (method !== "POST") return json(res, 405, { error: "Method not allowed" })
+        if (group[2] === "discard") return json(res, 200, { removed: await store.discard(group[1]!) })
+        const pick = typeof body.id === "string" ? body.id : ""
+        return json(res, 200, { artifact: summary(await store.pick(group[1]!, pick, origin)) })
+      }
       const design = /^\/api\/(edit|restore)\/([a-z0-9-]+)$/.exec(path)
       if (design) {
         if (method !== "POST") return json(res, 405, { error: "Method not allowed" })

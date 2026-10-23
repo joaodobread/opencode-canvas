@@ -386,7 +386,7 @@ export function createTools(runtime: Runtime) {
         const url = await runtime.urlFor()
         if (!items.length) return { content: `The canvas is empty${kind ? ` (no ${kind} designs)` : ""}.\nPreview: ${url}` }
         const rows = items.map(
-          (a) => `- ${a.id}: ${a.kind}, "${a.title}", v${a.revision}${a.designSystem ? `, uses ${a.designSystem}` : ""}${a.device && a.device !== "responsive" ? `, ${a.device}` : ""}`,
+          (a) => `- ${a.id}: ${a.kind}, "${a.title}", v${a.revision}${a.variantOf ? `, variation of ${a.variantOf}` : ""}${a.designSystem ? `, uses ${a.designSystem}` : ""}${a.device && a.device !== "responsive" ? `, ${a.device}` : ""}`,
         )
         return { content: [`${items.length} design(s):`, ...rows, `Preview: ${url}`].join("\n") }
       })
@@ -596,7 +596,87 @@ export function createTools(runtime: Runtime) {
     options: { namespace: "canvas" },
   }
 
-  const tools: Info[] = [designSystem, screen, systemDesign, edit, list, get, remove, open, comments, reply, history, restore]
+  const variations = {
+    name: "variations",
+    description:
+      "Create 2-4 alternative versions of a screen side by side so the user can compare them in the canvas and pick one. Each variation should explore a clearly different direction " +
+      "(layout, hierarchy, tone), not a small tweak. The user's pick replaces the design with the chosen id (created if it does not exist) and the other variations are discarded. " +
+      "Calling it again with the same id replaces the previous set. Pass `from` to branch off an existing design.",
+    input: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: 'Id of the final design the pick will produce, e.g. "pricing".' },
+        title: { type: "string", description: 'Title of the design, e.g. "Pricing page".' },
+        variants: {
+          type: "array",
+          minItems: 2,
+          maxItems: 4,
+          items: {
+            type: "object",
+            properties: {
+              label: { type: "string", description: 'Short name of the direction, e.g. "Bold hero" or "Comparison table".' },
+              html: { type: "string", description: "Full HTML document or body fragment." },
+            },
+            required: ["label", "html"],
+            additionalProperties: false,
+          },
+        },
+        kind: { type: "string", enum: [...FREE_FORM], description: "Default: screen." },
+        device: { type: "string", enum: [...DEVICES] },
+        designSystem: { type: "string", description: 'Design system id, or "none". Default: the one used by the design, else the most recent.' },
+      },
+      required: ["id", "title", "variants"],
+      additionalProperties: false,
+    },
+    async execute(raw: unknown, context?: unknown) {
+      runtime.track(context)
+      return guard(async () => {
+        const input = raw as Input
+        const group = str(input, "id", true)!
+        const title = str(input, "title", true)!
+        const kind = (oneOf(input, "kind", FREE_FORM) ?? "screen") as Kind
+        const items = input.variants
+        if (!Array.isArray(items) || items.length < 2 || items.length > 4) fail('"variants" needs 2 to 4 items.')
+        await store.init()
+        store.resolveId({ id: group, kind, title, html: "" })
+        const base = store.get(group)
+        if (base && base.kind !== kind) fail(`Id "${group}" is already used by a ${base.kind}.`)
+        const ds = resolveDesignSystem(input, kind, base)
+        const device = oneOf(input, "device", DEVICES) as Device | undefined
+        const parsed = items.map((entry, i) => {
+          const item = entry as Input
+          return { label: str(item, "label", true) ?? `Option ${i + 1}`, html: str(item, "html", true)! }
+        })
+        await store.discard(group)
+        const ids: string[] = []
+        for (const [i, item] of parsed.entries()) {
+          const saved = await store.save({
+            id: `${group}-v${i + 1}`,
+            kind,
+            title: `${title} \u00b7 ${item.label}`,
+            html: item.html,
+            device: device ?? base?.device,
+            designSystem: ds.id,
+            variantOf: group,
+            variantLabel: item.label,
+          })
+          ids.push(saved.artifact.id)
+        }
+        const url = await runtime.announce(ids[0]!)
+        return {
+          content: [
+            `Created ${parsed.length} variations of "${title}": ${parsed.map((v, i) => `${ids[i]} (${v.label})`).join(", ")}.`,
+            "The user compares them side by side in the canvas and picks one; the pick becomes the design with id \"" + group + "\".",
+            `Preview: ${url}`,
+          ].join("\n"),
+          metadata: { id: group, variants: ids, url },
+        }
+      })
+    },
+    options: { namespace: "canvas" },
+  }
+
+  const tools: Info[] = [designSystem, screen, systemDesign, edit, list, get, remove, open, comments, reply, history, restore, variations]
   return tools
 }
 
