@@ -6,6 +6,7 @@ import { INSPECTOR_JS } from "./inspector.js"
 import { prepareDocument } from "./render/document.js"
 import { isValidId, type Artifact, type ChangeEvent, type Store } from "./store.js"
 import { EDITABLE_KINDS, applyEdits, parseOps } from "./edit.js"
+import { buildZip, renderPdf } from "./export.js"
 import { VIEWER_HTML } from "./viewer.js"
 
 export interface CanvasServer {
@@ -30,7 +31,7 @@ const SECURITY = {
   "cache-control": "no-store",
 }
 
-function send(res: ServerResponse, status: number, body: string, type = "text/html; charset=utf-8", extra: Record<string, string> = {}) {
+function send(res: ServerResponse, status: number, body: string | Buffer, type = "text/html; charset=utf-8", extra: Record<string, string> = {}) {
   res.writeHead(status, { "content-type": type, ...SECURITY, ...extra })
   res.end(body)
 }
@@ -223,6 +224,42 @@ export async function startServer(store: Store, comments: CommentStore, options:
       clients.add(res)
       req.on("close", () => clients.delete(res))
       return
+    }
+
+    if (path === "/zip") {
+      const only = url.searchParams.get("design")
+      const targets = store.list().filter((a) => !a.variantOf && (!only || a.id === only))
+      if (!targets.length) return send(res, 404, "Nothing to export", "text/plain")
+      const files: { name: string; data: string }[] = []
+      for (const artifact of targets) {
+        const html = await store.html(artifact.id)
+        if (html === undefined) continue
+        const css = await designSystemCss(artifact)
+        files.push({ name: `${artifact.id}.html`, data: prepareDocument(html, { title: artifact.title, designSystemCss: css }) })
+      }
+      const manifest = targets.map((a) => `- ${a.id}.html: ${a.kind}, ${a.title}`).join("\n")
+      files.push({ name: "README.txt", data: `Exported from OpenCode Canvas\n\n${manifest}\n` })
+      const name = only ?? "canvas-designs"
+      return send(res, 200, buildZip(files), "application/zip", {
+        "content-disposition": `attachment; filename="${name}.zip"`,
+        ...cookie,
+      })
+    }
+
+    const pdf = /^\/pdf\/([^/]+)$/.exec(path)
+    if (pdf) {
+      const id = decodeURIComponent(pdf[1]!)
+      const artifact = isValidId(id) ? store.get(id) : undefined
+      const html = artifact ? await store.html(id) : undefined
+      if (!artifact || html === undefined) return send(res, 404, "Not found", "text/plain")
+      try {
+        const css = await designSystemCss(artifact)
+        const page = prepareDocument(html, { title: artifact.title, designSystemCss: css })
+        const data = await renderPdf(page, artifact.device)
+        return send(res, 200, data, "application/pdf", { "content-disposition": `attachment; filename="${artifact.id}.pdf"`, ...cookie })
+      } catch (error) {
+        return send(res, 500, error instanceof Error ? error.message : String(error), "text/plain")
+      }
     }
 
     const match = /^\/(view|export|raw)\/([^/]+)$/.exec(path)
