@@ -10,7 +10,7 @@ From GitHub (pin a release tag to stay on a fixed version):
 
 ```sh
 opencode plugin add github:joaodobread/opencode-canvas            # latest main
-opencode plugin add github:joaodobread/opencode-canvas#v0.1.0     # a specific release
+opencode plugin add github:joaodobread/opencode-canvas#v0.2.0     # a specific release
 ```
 
 Or add it to `opencode.jsonc` (project or `~/.config/opencode/`) with options:
@@ -19,7 +19,7 @@ Or add it to `opencode.jsonc` (project or `~/.config/opencode/`) with options:
 {
   "$schema": "https://opencode.ai/config.json",
   "plugins": [
-    { "package": "github:joaodobread/opencode-canvas#v0.1.0", "options": { "port": 4317, "open": true } }
+    { "package": "github:joaodobread/opencode-canvas#v0.2.0", "options": { "port": 4317, "open": true } }
   ]
 }
 ```
