@@ -40,6 +40,10 @@ The user can press Comment in the browser, click an element and describe a chang
 
 When the user wants options, asks \"show me a few directions\" or is undecided, use \`canvas_variations\` instead of several \`canvas_screen\` calls. Make the options genuinely different (layout, hierarchy, tone), label each one, and keep content realistic. The user picks in the browser; the chosen one becomes the design with the given id, and then you keep iterating with \`canvas_edit\`.
 
+## Flows
+
+For multi-screen flows, create each screen with its own \`canvas_screen\` call and a clear title. The user sees them all together under **All screens** in the canvas (each at its device size), so keep device and design system consistent across the flow.
+
 ## Implementing in the project
 
 The Implement button in the canvas sends you a prompt with the design HTML and the design-system class sheet. Rebuild the design with the project's own stack and components (do not paste the HTML), map the tokens to the project's theme, wire it into a route or component, and report what you created.
