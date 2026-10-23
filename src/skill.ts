@@ -15,6 +15,7 @@ The canvas plugin gives you tools (namespace \`canvas\`) that render designs as 
 - \`canvas_edit\` - exact-text replacement inside an existing design (cheap tweaks).
 - \`canvas_get\`, \`canvas_list\`, \`canvas_delete\`, \`canvas_open\`.
 - \`canvas_comments\` / \`canvas_reply\` - feedback the user pins on elements in the browser.
+- \`canvas_variations\` - 2-4 alternative directions of one screen, shown side by side; the user picks one.
 - \`canvas_history\` / \`canvas_restore\` - every revision is saved; list versions and go back to one (the restore becomes a new revision).
 
 ## Workflow
@@ -34,6 +35,10 @@ The user can press Comment in the browser, click an element and describe a chang
 2. Make the smallest change that satisfies the request (\`canvas_edit\`, or the matching canvas tool for design systems and diagrams). Keep the rest of the design untouched.
 3. Call \`canvas_reply\` with one or two sentences about what you changed and \`resolve: true\`. If the request is ambiguous, reply with a question and leave it open.
 4. \`canvas_comments\` lists pending comments if you need to catch up.
+
+## Variations
+
+When the user wants options, asks \"show me a few directions\" or is undecided, use \`canvas_variations\` instead of several \`canvas_screen\` calls. Make the options genuinely different (layout, hierarchy, tone), label each one, and keep content realistic. The user picks in the browser; the chosen one becomes the design with the given id, and then you keep iterating with \`canvas_edit\`.
 
 ## Direct edits
 

@@ -208,6 +208,26 @@ assert.ok(JSON.parse((await get("/api/history/legacy")).body).versions.length >=
 await run("delete", { id: "hero" }); await run("delete", { id: "legacy" })
 assert.deepEqual(JSON.parse((await get("/api/history/hero")).body).versions, [])
 
+// variations
+r = await run("variations", { id: "pricing", title: "Pricing page", variants: [{ label: "Bold hero", html: "<h1>Bold</h1>" }, { label: "Table", html: "<h1>Table</h1>" }, { label: "Cards", html: "<h1>Cards</h1>" }] })
+assert.match(text(r), /3 variations/)
+assert.equal(store.variants("pricing").length, 3)
+assert.equal(store.get("pricing-v2")!.variantOf, "pricing")
+assert.match(text(await run("list", {})), /variation of pricing/)
+await assert.rejects(run("variations", { id: "pricing", title: "x", variants: [{ label: "a", html: "x" }] }), /2 to 4/)
+await run("variations", { id: "pricing", title: "Pricing page", variants: [{ label: "A", html: "<h1>A</h1>" }, { label: "B", html: "<h1>B</h1>" }] })
+assert.equal(store.variants("pricing").length, 2, "a new set replaces the old one")
+assert.equal((await post("/api/variations/pricing/pick", { id: "login" })).res.status, 400)
+const picked = await post("/api/variations/pricing/pick", { id: "pricing-v2", origin: "t1" })
+assert.equal(picked.res.status, 200); assert.equal(picked.json.artifact.id, "pricing")
+assert.match((await store.html("pricing"))!, /<h1>B<\/h1>/)
+assert.equal(store.variants("pricing").length, 0); assert.equal(store.get("pricing")!.variantOf, undefined)
+assert.equal(store.get("pricing-v1"), undefined)
+await run("variations", { id: "pricing", title: "Pricing page", variants: [{ label: "A", html: "<h1>A2</h1>" }, { label: "B", html: "<h1>B2</h1>" }] })
+assert.equal((await post("/api/variations/pricing/discard", {})).json.removed, 2)
+assert.match((await store.html("pricing"))!, /<h1>B<\/h1>/, "discard keeps the original")
+await run("delete", { id: "pricing" })
+
 // delete protection
 await assert.rejects(run("delete", { id: "acme-ui" }), /used by/)
 await run("delete", { id: "login" })

@@ -19,6 +19,9 @@ export interface Artifact {
   designSystem?: string
   /** Structured source for generated artifacts (design tokens, system graph). */
   data?: unknown
+  /** Group id when this design is one of several variations of the same screen. */
+  variantOf?: string
+  variantLabel?: string
   createdAt: number
   updatedAt: number
   revision: number
@@ -29,6 +32,7 @@ export interface ChangeEvent {
   id: string
   focus?: boolean
   revision?: number
+  variantOf?: string
   /** Who made the change: "agent", "edit" (direct edit in the canvas), "restore" or "external". */
   source?: string
   /** Id of the browser tab that made the change, so that tab can skip reloading its own edits. */
@@ -63,6 +67,8 @@ export interface SaveInput {
   data?: unknown
   source?: string
   origin?: string
+  variantOf?: string
+  variantLabel?: string
 }
 
 const MAX_HTML_BYTES = 4 * 1024 * 1024
@@ -351,6 +357,8 @@ export class Store extends EventEmitter {
       device: input.device ?? existing?.device,
       designSystem: input.designSystem ?? existing?.designSystem,
       data: input.data ?? existing?.data,
+      variantOf: input.variantOf ?? existing?.variantOf,
+      variantLabel: input.variantLabel ?? existing?.variantLabel,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
       revision: (existing?.revision ?? 0) + 1,
@@ -373,8 +381,43 @@ export class Store extends EventEmitter {
       await this.persistIndex()
       await this.snapshot(artifact, input.html, source).catch(() => undefined)
     })
-    this.emitChange({ type: "upsert", id, focus: true, source, origin: input.origin, revision: artifact.revision })
+    this.emitChange({ type: "upsert", id, focus: true, source, origin: input.origin, revision: artifact.revision, variantOf: artifact.variantOf })
     return { artifact, created: !existing }
+  }
+
+  variants(group: string): Artifact[] {
+    return this.list()
+      .filter((artifact) => artifact.variantOf === group)
+      .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
+  }
+
+  async pick(group: string, id: string, origin?: string): Promise<Artifact> {
+    await this.init()
+    const chosen = this.artifacts.get(id)
+    if (!chosen || chosen.variantOf !== group) throw new Error(`"${id}" is not a variation of "${group}".`)
+    const html = await this.html(id)
+    if (html === undefined) throw new Error("The HTML for this variation is missing on disk.")
+    const base = this.artifacts.get(group)
+    if (base && base.kind !== chosen.kind) throw new Error(`Id "${group}" is already used by a ${base.kind}.`)
+    const saved = await this.save({
+      id: group,
+      kind: chosen.kind,
+      title: base?.title ?? chosen.title.replace(/\s+\u00b7\s+[^\u00b7]*$/, ""),
+      html,
+      description: chosen.description,
+      device: chosen.device,
+      designSystem: chosen.designSystem,
+      source: `variation ${chosen.variantLabel ?? id}`,
+      origin,
+    })
+    await this.discard(group)
+    return saved.artifact
+  }
+
+  async discard(group: string): Promise<number> {
+    const list = this.variants(group)
+    for (const variant of list) await this.remove(variant.id)
+    return list.length
   }
 
   async remove(id: string): Promise<boolean> {
