@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto"
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http"
 import type { AddressInfo } from "node:net"
 import type { CommentEvent, CommentStatus, CommentStore } from "./comments.js"
-import { INSPECTOR_JS } from "./inspector.js"
+import { BOARD_FRAME_JS, INSPECTOR_JS } from "./inspector.js"
 import { prepareDocument } from "./render/document.js"
 import { isValidId, type Artifact, type ChangeEvent, type Store } from "./store.js"
 import { EDITABLE_KINDS, applyEdits, parseOps } from "./edit.js"
@@ -127,6 +127,21 @@ export async function startServer(store: Store, comments: CommentStore, options:
     const text = typeof body.text === "string" ? body.text : ""
     const origin = typeof body.origin === "string" ? body.origin.slice(0, 40) : undefined
     try {
+      if (path === "/api/projects" && method === "POST") {
+        const name = typeof body.name === "string" ? body.name : ""
+        return json(res, 201, { project: await store.createProject(name) })
+      }
+      const folder = /^\/api\/projects\/([a-z0-9-]+)$/.exec(path)
+      if (folder) {
+        if (method === "DELETE") return json(res, 200, { moved: await store.removeProject(folder[1]!) })
+        const name = typeof body.name === "string" ? body.name : ""
+        return json(res, 200, { project: await store.renameProject(folder[1]!, name) })
+      }
+      if (path === "/api/move" && method === "POST") {
+        const ids = Array.isArray(body.ids) ? body.ids.filter((v): v is string => typeof v === "string").slice(0, 200) : []
+        const project = typeof body.project === "string" && body.project ? body.project : undefined
+        return json(res, 200, { moved: await store.move(ids, project) })
+      }
       const impl = /^\/api\/handoff\/([a-z0-9-]+)$/.exec(path)
       if (impl) {
         if (method !== "POST") return json(res, 405, { error: "Method not allowed" })
@@ -235,7 +250,7 @@ export async function startServer(store: Store, comments: CommentStore, options:
     const versions = /^\/api\/history\/([a-z0-9-]+)$/.exec(path)
     if (versions) return json(res, 200, { versions: await store.history(versions[1]!) })
 
-    if (path === "/api/artifacts") return json(res, 200, { artifacts: store.list().map(summary) })
+    if (path === "/api/artifacts") return json(res, 200, { artifacts: store.list().map(summary), projects: store.projects() })
 
     if (path === "/events") {
       res.writeHead(200, {
@@ -252,7 +267,8 @@ export async function startServer(store: Store, comments: CommentStore, options:
 
     if (path === "/zip") {
       const only = url.searchParams.get("design")
-      const targets = store.list().filter((a) => !a.variantOf && (!only || a.id === only))
+      const folder = url.searchParams.get("project")
+      const targets = store.list().filter((a) => !a.variantOf && (!only || a.id === only) && (!folder || a.project === folder))
       if (!targets.length) return send(res, 404, "Nothing to export", "text/plain")
       const files: { name: string; data: string }[] = []
       for (const artifact of targets) {
@@ -263,7 +279,7 @@ export async function startServer(store: Store, comments: CommentStore, options:
       }
       const manifest = targets.map((a) => `- ${a.id}.html: ${a.kind}, ${a.title}`).join("\n")
       files.push({ name: "README.txt", data: `Exported from OpenCode Canvas\n\n${manifest}\n` })
-      const name = only ?? "canvas-designs"
+      const name = only ?? folder ?? "canvas-designs"
       return send(res, 200, buildZip(files), "application/zip", {
         "content-disposition": `attachment; filename="${name}.zip"`,
         ...cookie,
@@ -306,7 +322,12 @@ export async function startServer(store: Store, comments: CommentStore, options:
       }
       const page = prepareDocument(html, {
         title: artifact.title,
-        bodyEnd: url.searchParams.get("inspect") === "1" ? `<script data-canvas-ui>${INSPECTOR_JS}</script>` : undefined,
+        bodyEnd:
+          url.searchParams.get("inspect") === "1"
+            ? `<script data-canvas-ui>${INSPECTOR_JS}</script>`
+            : url.searchParams.get("board") === "1"
+              ? `<script data-canvas-ui>${BOARD_FRAME_JS}</script>`
+              : undefined,
         designSystemHref: artifact.designSystem && store.get(artifact.designSystem) ? `/ds/${encodeURIComponent(artifact.designSystem)}.css${query}` : undefined,
       })
       return send(res, 200, page, "text/html; charset=utf-8", cookie)
