@@ -1,0 +1,275 @@
+import { EventEmitter } from "node:events"
+import { watch, type FSWatcher } from "node:fs"
+import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises"
+import path from "node:path"
+
+export const KINDS = ["design-system", "screen", "component", "prototype", "system-design", "document"] as const
+export type Kind = (typeof KINDS)[number]
+
+export const DEVICES = ["responsive", "desktop", "tablet", "mobile"] as const
+export type Device = (typeof DEVICES)[number]
+
+export interface Artifact {
+  id: string
+  kind: Kind
+  title: string
+  description?: string
+  device?: Device
+  /** Id of a design-system artifact whose CSS is injected when the artifact is viewed. */
+  designSystem?: string
+  /** Structured source for generated artifacts (design tokens, system graph). */
+  data?: unknown
+  createdAt: number
+  updatedAt: number
+  revision: number
+}
+
+export interface ChangeEvent {
+  type: "upsert" | "remove" | "touch"
+  id: string
+  focus?: boolean
+}
+
+export interface SaveInput {
+  id?: string
+  kind: Kind
+  title: string
+  html: string
+  description?: string
+  device?: Device
+  designSystem?: string
+  data?: unknown
+}
+
+const MAX_HTML_BYTES = 4 * 1024 * 1024
+
+export function slug(input: string): string {
+  const value = input
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60)
+    .replace(/-+$/g, "")
+  return value || "untitled"
+}
+
+export function isValidId(id: string): boolean {
+  return /^[a-z0-9][a-z0-9-]{0,59}$/.test(id)
+}
+
+export class Store extends EventEmitter {
+  private artifacts = new Map<string, Artifact>()
+  private starting?: Promise<void>
+  private queue: Promise<unknown> = Promise.resolve()
+  private watcher?: FSWatcher
+  private written = new Map<string, string | null>()
+  private timers = new Map<string, NodeJS.Timeout>()
+
+  constructor(readonly dir: string) {
+    super()
+  }
+
+  init(): Promise<void> {
+    this.starting ??= this.load()
+    return this.starting
+  }
+
+  close() {
+    this.watcher?.close()
+    this.watcher = undefined
+    for (const timer of this.timers.values()) clearTimeout(timer)
+    this.timers.clear()
+  }
+
+  private get indexFile() {
+    return path.join(this.dir, "index.json")
+  }
+
+  htmlFile(id: string) {
+    return path.join(this.dir, `${id}.html`)
+  }
+
+  private async load() {
+    await mkdir(this.dir, { recursive: true })
+    try {
+      const parsed = JSON.parse(await readFile(this.indexFile, "utf8")) as { artifacts?: Artifact[] }
+      for (const artifact of parsed.artifacts ?? []) {
+        if (artifact && isValidId(artifact.id)) this.artifacts.set(artifact.id, artifact)
+      }
+    } catch {
+      // first run or unreadable index: rebuild from the html files below
+    }
+    await this.adoptOrphans()
+    this.startWatching()
+  }
+
+  private async adoptOrphans() {
+    let changed = false
+    for (const name of await readdir(this.dir).catch(() => [] as string[])) {
+      if (!name.endsWith(".html")) continue
+      const id = name.slice(0, -5)
+      if (!isValidId(id) || this.artifacts.has(id)) continue
+      const html = await readFile(path.join(this.dir, name), "utf8").catch(() => undefined)
+      if (html === undefined) continue
+      this.artifacts.set(id, this.adopted(id, html))
+      changed = true
+    }
+    for (const artifact of [...this.artifacts.values()]) {
+      const exists = await readFile(this.htmlFile(artifact.id)).then(
+        () => true,
+        () => false,
+      )
+      if (!exists) {
+        this.artifacts.delete(artifact.id)
+        changed = true
+      }
+    }
+    if (changed) await this.persistIndex()
+  }
+
+  private adopted(id: string, html: string): Artifact {
+    const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1]?.trim()
+    const now = Date.now()
+    return { id, kind: "screen", title: title || id, createdAt: now, updatedAt: now, revision: 1 }
+  }
+
+  private startWatching() {
+    try {
+      this.watcher = watch(this.dir, (_event, filename) => {
+        if (!filename || !filename.endsWith(".html")) return
+        const id = filename.slice(0, -5)
+        if (!isValidId(id)) return
+        clearTimeout(this.timers.get(id))
+        this.timers.set(
+          id,
+          setTimeout(() => {
+            this.timers.delete(id)
+            void this.onExternalChange(id)
+          }, 120),
+        )
+      })
+      this.watcher.on("error", () => undefined)
+    } catch {
+      // watching is best effort
+    }
+  }
+
+  private async onExternalChange(id: string) {
+    const html = await readFile(this.htmlFile(id), "utf8").catch(() => undefined)
+    // our own writes echo back through the watcher; only react when the disk differs from what we last wrote
+    if (this.written.has(id) && this.written.get(id) === (html ?? null)) return
+    this.written.delete(id)
+    const existing = this.artifacts.get(id)
+    if (html === undefined) {
+      if (!existing) return
+      this.artifacts.delete(id)
+      await this.enqueue(() => this.persistIndex())
+      this.emitChange({ type: "remove", id })
+      return
+    }
+    if (!existing) {
+      this.artifacts.set(id, this.adopted(id, html))
+      await this.enqueue(() => this.persistIndex())
+      this.emitChange({ type: "upsert", id, focus: true })
+      return
+    }
+    existing.updatedAt = Date.now()
+    existing.revision += 1
+    await this.enqueue(() => this.persistIndex())
+    this.emitChange({ type: "touch", id, focus: true })
+  }
+
+  private emitChange(event: ChangeEvent) {
+    this.emit("change", event)
+  }
+
+  private enqueue<T>(job: () => Promise<T>): Promise<T> {
+    const run = this.queue.then(job, job)
+    this.queue = run.catch(() => undefined)
+    return run
+  }
+
+  private async persistIndex() {
+    const tmp = `${this.indexFile}.tmp`
+    const body = JSON.stringify({ version: 1, artifacts: [...this.artifacts.values()] }, null, 2)
+    await writeFile(tmp, body)
+    await rename(tmp, this.indexFile)
+  }
+
+  list(kind?: Kind): Artifact[] {
+    return [...this.artifacts.values()]
+      .filter((artifact) => !kind || artifact.kind === kind)
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+  }
+
+  get(id: string): Artifact | undefined {
+    return this.artifacts.get(id)
+  }
+
+  async html(id: string): Promise<string | undefined> {
+    if (!this.artifacts.has(id)) return undefined
+    return readFile(this.htmlFile(id), "utf8").catch(() => undefined)
+  }
+
+  resolveId(input: SaveInput): string {
+    if (input.id !== undefined) {
+      if (!isValidId(input.id)) {
+        throw new Error(`Invalid id "${input.id}". Use lowercase letters, digits and dashes (max 60 chars).`)
+      }
+      return input.id
+    }
+    const base = slug(input.title)
+    let candidate = base
+    for (let n = 2; ; n++) {
+      const existing = this.artifacts.get(candidate)
+      if (!existing || existing.kind === input.kind) return candidate
+      candidate = `${base}-${n}`
+    }
+  }
+
+  async save(input: SaveInput): Promise<{ artifact: Artifact; created: boolean }> {
+    await this.init()
+    if (Buffer.byteLength(input.html) > MAX_HTML_BYTES) throw new Error("HTML is larger than 4 MB.")
+    const id = this.resolveId(input)
+    const existing = this.artifacts.get(id)
+    if (existing && existing.kind !== input.kind) {
+      throw new Error(`Id "${id}" is already used by a ${existing.kind}. Pick another id.`)
+    }
+    const now = Date.now()
+    const artifact: Artifact = {
+      id,
+      kind: input.kind,
+      title: input.title,
+      description: input.description ?? existing?.description,
+      device: input.device ?? existing?.device,
+      designSystem: input.designSystem ?? existing?.designSystem,
+      data: input.data ?? existing?.data,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+      revision: (existing?.revision ?? 0) + 1,
+    }
+    await this.enqueue(async () => {
+      this.written.set(id, input.html)
+      await writeFile(this.htmlFile(id), input.html)
+      this.artifacts.set(id, artifact)
+      await this.persistIndex()
+    })
+    this.emitChange({ type: "upsert", id, focus: true })
+    return { artifact, created: !existing }
+  }
+
+  async remove(id: string): Promise<boolean> {
+    await this.init()
+    if (!this.artifacts.has(id)) return false
+    await this.enqueue(async () => {
+      this.written.set(id, null)
+      this.artifacts.delete(id)
+      await rm(this.htmlFile(id), { force: true })
+      await this.persistIndex()
+    })
+    this.emitChange({ type: "remove", id })
+    return true
+  }
+}
