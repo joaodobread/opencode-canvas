@@ -41,7 +41,7 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@opencode/plugin": "^2.1.4"
+    "@opencode/plugin": "^2.2.6"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
